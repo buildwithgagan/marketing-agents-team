@@ -1,0 +1,18 @@
+[project]
+name = "deepagent"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "deepagents>=0.3.0",
+    "tavily-python>=0.7.17",
+    "langchain-mcp-adapters>=0.0.1",
+    "langchain-openai>=0.1.0",
+    "python-dotenv>=1.0.0",
+    "dotenv<1.0.0",
+    "fastapi>=0.127.0",
+    "uvicorn>=0.40.0",
+    "langgraph-checkpoint-sqlite>=3.0.1",
+    "aiosqlite>=0.22.0",
+]
