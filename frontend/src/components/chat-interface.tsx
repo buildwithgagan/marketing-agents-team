@@ -15,6 +15,9 @@ import { cn } from "@/lib/utils";
 interface Message {
   role: "user" | "assistant" | "tool";
   content: string;
+  plan?: string[];
+  researchQueries?: { query: string; status: 'searching' | 'done' }[];
+  sources?: { title: string; url: string }[];
 }
 
 interface ChatSession {
@@ -156,40 +159,91 @@ export function ChatInterface() {
           if (!line.trim()) continue;
           try {
             const event = JSON.parse(line);
-            if (event.type === "status") {
-              setCurrentStatus(event.content);
-              if (event.content.startsWith("Running tool")) {
-                toast.info(event.content, { duration: 2000 });
-              }
-            } else if (event.type === "content") {
-              streamedContent += event.content;
-              setSessions(prev => prev.map(s => {
-                if (s.id !== sessionId) return s;
-                const newMsgs = [...s.messages];
-                const last = newMsgs[newMsgs.length - 1];
-                if (last && last.role === "assistant") {
-                  last.content = streamedContent;
-                }
-                return { ...s, messages: newMsgs };
-              }));
-            } else if (event.type === "tool_result") {
-              // Add a separate message for tool result to make it visible
-              const toolMessage: Message = { role: "tool", content: event.content };
-              setSessions(prev => prev.map(s => {
-                if (s.id !== sessionId) return s;
-                // Insert tool message before the current empty assistant message or as a new message
-                const newMsgs = [...s.messages];
-                const last = newMsgs[newMsgs.length - 1];
-                if (last && last.role === "assistant" && !last.content) {
-                  // Replace empty placeholder or shift it
+            switch (event.type) {
+              case "content":
+                streamedContent += event.content;
+                setSessions(prev => prev.map(s => {
+                  if (s.id !== sessionId) return s;
+                  const newMsgs = [...s.messages];
+                  const last = newMsgs[newMsgs.length - 1];
+                  if (last && last.role === "assistant") {
+                    last.content = streamedContent;
+                  }
+                  return { ...s, messages: newMsgs };
+                }));
+                break;
+              case "status":
+                setCurrentStatus(event.content);
+                break;
+              case "plan":
+                setSessions(prev => prev.map(s => {
+                  if (s.id !== sessionId) return s;
+                  const newMsgs = [...s.messages];
+                  const last = newMsgs[newMsgs.length - 1];
+                  if (last && last.role === "assistant") {
+                    last.plan = event.content;
+                  }
+                  return { ...s, messages: newMsgs };
+                }));
+                break;
+              case "tool_start":
+                setSessions(prev => prev.map(s => {
+                  if (s.id !== sessionId) return s;
+                  const newMsgs = [...s.messages];
+                  const last = newMsgs[newMsgs.length - 1];
+                  if (last && last.role === "assistant") {
+                    const queries = last.researchQueries || [];
+                    const qStr = event.input || event.tool;
+                    if (!queries.find(q => q.query === qStr)) {
+                      last.researchQueries = [...queries, { query: qStr, status: 'searching' }];
+                    }
+                  }
+                  return { ...s, messages: newMsgs };
+                }));
+                break;
+              case "tool_result":
+                setSessions(prev => prev.map(s => {
+                  if (s.id !== sessionId) return s;
+                  const newMsgs = [...s.messages];
+                  
+                  const last = newMsgs[newMsgs.length - 1];
+                  if (last && last.role === "assistant") {
+                    // 1. Mark query as done
+                    const queries = last.researchQueries || [];
+                    last.researchQueries = queries.map(q => 
+                      q.query === (event.tool || '') ? { ...q, status: 'done' } : q
+                    );
+
+                    // 2. Extract sources if this is a search tool
+                    if (event.tool?.includes("search") || event.tool?.includes("tavily")) {
+                      try {
+                        // The content might be a markdown-wrapped JSON or just JSON
+                        let jsonStr = event.content;
+                        if (jsonStr.startsWith("```json")) {
+                          jsonStr = jsonStr.replace(/```json\n|\n```/g, "");
+                        }
+                        const parsed = JSON.parse(jsonStr);
+                        const newSources = (parsed.results || []).map((r: any) => ({
+                          title: r.title || "Untitled",
+                          url: r.url
+                        })).filter((r: any) => r.url);
+                        
+                        last.sources = [...(last.sources || []), ...newSources].filter((v, i, a) => a.findIndex(t => t.url === v.url) === i);
+                      } catch (e) {
+                         // Not JSON or parse failed, skip source extraction
+                      }
+                    }
+                  }
+
+                  const toolMessage: Message = { role: "tool", content: event.content };
                   newMsgs.splice(newMsgs.length - 1, 0, toolMessage);
-                } else {
-                  newMsgs.push(toolMessage);
-                }
-                return { ...s, messages: newMsgs };
-              }));
-            } else if (event.type === "error") {
-              toast.error(event.content);
+                  
+                  return { ...s, messages: newMsgs };
+                }));
+                break;
+              case "error":
+                toast.error(event.content);
+                break;
             }
           } catch (e) {
             console.error("Error parsing JSON line:", e, line);
@@ -401,6 +455,92 @@ export function ChatInterface() {
                         "text-[15px] md:text-base leading-[1.7] break-words",
                         message.role === "assistant" || message.role === "tool" ? "prose prose-invert prose-blue max-w-none prose-pre:bg-black/50 prose-pre:border prose-pre:border-white/5" : "font-semibold"
                       )}>
+                        {message.role === "assistant" && (message.plan || message.researchQueries) && (
+                          <div className="mb-6 space-y-4 not-prose">
+                            {/* Research Strategy / Plan */}
+                            {message.plan && (
+                              <div className="bg-slate-950/50 border border-slate-800 rounded-2xl p-4">
+                                <div className="flex items-center gap-2 mb-3 text-[10px] font-black uppercase tracking-widest text-slate-500">
+                                  <Sparkles className="w-3 h-3 text-blue-500" />
+                                  Research Strategy
+                                </div>
+                                <div className="space-y-2">
+                                  {message.plan.map((item, i) => (
+                                    <div key={i} className="flex items-start gap-3 group">
+                                      <div className="w-5 h-5 rounded-full border border-slate-700 flex items-center justify-center flex-shrink-0 mt-0.5 group-hover:border-blue-500/50 transition-colors">
+                                        <div className="w-1.5 h-1.5 bg-slate-700 rounded-full group-hover:bg-blue-500 transition-colors" />
+                                      </div>
+                                      <span className="text-sm text-slate-400 group-hover:text-slate-200 transition-colors">
+                                        {typeof item === 'string' ? item : JSON.stringify(item)}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Search Queries Progress */}
+                            {message.researchQueries && message.researchQueries.length > 0 && (
+                              <div className="bg-slate-950/50 border border-slate-800 rounded-2xl p-4">
+                                <div className="flex items-center gap-2 mb-3 text-[10px] font-black uppercase tracking-widest text-slate-500">
+                                  <Terminal className="w-3 h-3 text-green-500" />
+                                  Search Progress
+                                </div>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                  {message.researchQueries.map((q, i) => (
+                                    <div key={i} className="flex items-center gap-3 bg-slate-900/50 border border-slate-800/50 p-2.5 rounded-xl">
+                                      {q.status === 'searching' ? (
+                                        <Loader2 className="w-3 h-3 text-blue-500 animate-spin flex-shrink-0" />
+                                      ) : (
+                                        <div className="w-3 h-3 bg-green-500 rounded-full flex-shrink-0 shadow-[0_0_10px_rgba(34,197,94,0.3)]" />
+                                      )}
+                                      <span className="text-xs font-medium text-slate-300 truncate">
+                                        {typeof q.query === 'string' ? q.query : JSON.stringify(q.query)}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Sources Grid */}
+                            {message.sources && message.sources.length > 0 && (
+                              <div className="bg-slate-950/50 border border-slate-800 rounded-2xl p-4">
+                                <div className="flex items-center gap-2 mb-3 text-[10px] font-black uppercase tracking-widest text-slate-500">
+                                  <History className="w-3 h-3 text-purple-500" />
+                                  Identified Sources
+                                </div>
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                  {message.sources.map((source, i) => {
+                                    let hostname = "link";
+                                    try {
+                                      hostname = new URL(source.url).hostname;
+                                    } catch(e) {}
+                                    
+                                    return (
+                                      <a 
+                                        key={i} 
+                                        href={source.url} 
+                                        target="_blank" 
+                                        rel="noopener noreferrer"
+                                        className="flex flex-col gap-1 p-3 bg-slate-900/50 border border-slate-800/50 rounded-xl hover:border-blue-500/50 hover:bg-slate-800/50 transition-all group"
+                                      >
+                                        <span className="text-[10px] font-bold text-slate-400 group-hover:text-blue-400 transition-colors flex items-center gap-1.5 truncate">
+                                          <img src={`https://www.google.com/s2/favicons?domain=${hostname}&sz=32`} className="w-3 h-3 rounded-sm" alt="" />
+                                          {hostname}
+                                        </span>
+                                        <span className="text-[11px] font-medium text-slate-200 line-clamp-2 leading-snug">
+                                          {source.title}
+                                        </span>
+                                      </a>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
                         {message.content ? (
                           (() => {
                             const content = typeof message.content === 'string' 

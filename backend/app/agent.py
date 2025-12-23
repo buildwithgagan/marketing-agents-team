@@ -48,32 +48,45 @@ class AgentManager:
         # Configure Subagents
         research_agent = {
             "name": "research-agent",
-            "description": "Specialized agent for deep research tasks, market analysis, and broad topic exploration.",
+            "description": "Expert in global discovery. Use this to find the best URLs and initial facts across the web.",
             "model": "gpt-4.1", 
             "tools": tavily_tools, 
-            "system_prompt": "You are a specialized Research Agent. Use 'tavily-search' to find information and 'tavily-extract' to get content from key sources. Synthesize your findings into a comprehensive answer."
+            "system_prompt": "You are a Discovery Expert. Use 'tavily_search' to find top-tier sources and 'tavily_extract' to verify key claims. Your goal is to pass high-quality URLs to the Master for deep-diving."
         }
 
         crawl_agent = {
             "name": "crawl-agent",
-            "description": "Specialized agent for crawling websites and extracting structured data.",
+            "description": "Expert in deep extraction. Use this to scrape full text, technical docs, and structured data from specific URLs.",
             "model": "gpt-4.1",
             "tools": tavily_tools,
-            "system_prompt": "You are a specialized Crawl Agent. Use 'tavily-crawl' to explore websites and 'tavily-extract' (or 'tavily-map') to gather data. Focus on structure and completeness."
+            "system_prompt": "You are an Extraction Specialist. Your priority is reading the FULL content of a page using 'tavily_extract'. Don't settle for snippets; get the whole story so the Master can synthesize deeply."
         }
 
         subagents = [research_agent, crawl_agent]
 
-        system_prompt = """You are a helpful Deep Agent powered by Tavily MCP and DeepAgents framework.
+        system_prompt = """You are the Master Deep Agent, an elite research orchestrator. Your goal is to move beyond simple search engine results and perform true deep research.
         
-        Your Capabilities:
-        1. **Planning**: Always start by writing a plan (todos) for complex requests.
-        2. **Real-time Knowledge**: Use the `research-agent` or direct tools (`tavily-search`) to get the latest news and information.
-        3. **Web Crawling**: Use the `crawl-agent` to map and extract data from specific websites.
-        4. **File System**: You can read/write files to save your reports or code.
+        ### Operational Protocol:
         
-        If the user asks about the latest news, use your tools or the research sub-agent.
-        If the user asks to crawl a site, delegate to the crawl sub-agent.
+        #### Phase 1: Planning
+        Generate a comprehensive todo list. Include steps for both Discovery (Search) and Deep-Dive (Extraction).
+        
+        #### Phase 2: Information Gathering (THOROUGH)
+        Research is a two-stage process of Discovery then Extraction.
+        1. **Discovery (Search)**: Use tools like `tavily_search` to find high-quality URLs. **IMPORTANT**: Search snippets are only for discovery; they are NOT sufficient for comprehensive research.
+        2. **Deep-Dive (Extraction)**: For the top 3-5 most relevant URLs found during discovery, you **MUST** use `tavily_extract` or `tavily_crawl` to retrieve the full page content.
+        - **DO NOT** summarize until you have read the actual body text of these primary sources.
+        - **DO NOT** provide a summary after every tool call. Maintain silence while the research agents work.
+        - Execute tools until every research-related todo in your plan is marked as complete.
+        
+        #### Phase 3: Unified Synthesis & Final Report
+        Only when the full content of relevant primary sources has been analyzed, provide your response.
+        - Produce a **Unified Final Report** that is professional, deeply synthesized, and multi-layered.
+        - Connect insights across different extracted sources.
+        - End with a dedicated "Sources & References" section.
+        
+        ### Visualization Note:
+        The UI visualizes your progress automatically. Focus your output on elite synthesis. If you are still in Phase 2, proceed through the plan without stopping to chat until the deep extraction is complete.
         """
 
         from deepagents import create_deep_agent
