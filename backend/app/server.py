@@ -50,14 +50,23 @@ async def chat_endpoint(request: Request):
     data = await request.json()
     messages = data.get("messages", [])
     thread_id = data.get("thread_id", "default-thread")
+    model_name = data.get("model", "gpt-4.1")
+    thinking_enabled = data.get("thinking", False)
+    
     last_message = messages[-1] if messages else {"content": ""}
     user_input = last_message.get("content", "")
 
     # We only send the latest message because the agent uses the checkpointer to remember history
     inputs = {"messages": [{"role": "user", "content": user_input}]}
-    config = {"configurable": {"thread_id": thread_id}}
+    config = {
+        "configurable": {
+            "thread_id": thread_id,
+            "model_name": model_name,
+            "thinking": thinking_enabled
+        }
+    }
     
-    logger.info(f"User Query (Thread: {thread_id}): {user_input}")
+    logger.info(f"User Query (Thread: {thread_id}, Model: {model_name}, Thinking: {thinking_enabled}): {user_input}")
 
     async def event_generator():
         try:
@@ -90,10 +99,11 @@ async def chat_endpoint(request: Request):
                 
                 # Node transition / Status updates
                 elif kind == "on_chain_start":
-                    if name in ["research-agent", "crawl-agent", "agent"]:
+                    if name in ["research-agent", "crawl-agent", "master-agent", "agent"]:
                         status_map = {
                             "research-agent": "Deep researching using Tavily...",
                             "crawl-agent": "Crawling website data...",
+                            "master-agent": "Master Orchestrator planning...",
                             "agent": "Thinking and planning...",
                         }
                         friendly_status = status_map.get(name, f"Processing: {name}")
@@ -129,7 +139,8 @@ async def chat_endpoint(request: Request):
                         "type": "tool_start", 
                         "tool": tool_name, 
                         "content": f"Running {tool_name}...", 
-                        "input": tool_input
+                        "input": tool_input,
+                        "tool_name": tool_name
                     }) + "\n"
                 
                 # Tool results (End)

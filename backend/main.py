@@ -52,15 +52,15 @@ async def main():
             print(f"Loaded {len(tavily_tools)} tools from Tavily: {[t.name for t in tavily_tools]}")
 
             # 3. Configure Model
-            # Using GPT-4o as the brain
-            model = ChatOpenAI(model="gpt-4o", temperature=0)
+            # Using GPT-4.1 as the brain
+            model = ChatOpenAI(model="gpt-4.1", temperature=0)
 
             # 4. Configure Subagents
             # Research Agent: Uses search and extract to synthesis information
             research_agent = {
                 "name": "research-agent",
                 "description": "Specialized agent for deep research tasks, market analysis, and broad topic exploration.",
-                "model": "gpt-4o", 
+                "model": "gpt-4.1-mini", 
                 "tools": tavily_tools, 
                 "system_prompt": "You are a specialized Research Agent. Use 'tavily-search' to find information and 'tavily-extract' to get content from key sources. Synthesize your findings into a comprehensive answer."
             }
@@ -69,7 +69,7 @@ async def main():
             crawl_agent = {
                 "name": "crawl-agent",
                 "description": "Specialized agent for crawling websites and extracting structured data.",
-                "model": "gpt-4o",
+                "model": "gpt-4.1-mini",
                 "tools": tavily_tools,
                 "system_prompt": "You are a specialized Crawl Agent. Use 'tavily-crawl' to explore websites and 'tavily-extract' (or 'tavily-map') to gather data. Focus on structure and completeness."
             }
