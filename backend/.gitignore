@@ -9,4 +9,5 @@ wheels/
 # Virtual environments
 .venv
 .env
-package-lock.json
+checkpoints.db
+uv.lock
