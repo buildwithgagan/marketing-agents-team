@@ -1,6 +1,7 @@
 "use client";
 
 import { Thread } from "@/components/thread";
+import { CustomThreadList } from "@/components/thread-list";
 import { MyAssistantRuntimeProvider } from "@/components/MyAssistantRuntime";
 import { cn } from "@/lib/utils";
 import { useState, useEffect, useCallback, useRef } from "react";
@@ -14,6 +15,8 @@ const MODEL_OPTIONS = [
     options: [
       { id: "gpt-5.2-chat-latest", name: "GPT-5.2 Chat (Full)" },
       { id: "gpt-5.1-chat-latest", name: "GPT-5.1 Chat (Adaptive)" },
+      { id: "o3-mini", name: "o3-mini (Reasoning)" },
+      { id: "o1", name: "o1 (Reasoning)" },
       { id: "gpt-5-mini", name: "GPT-5 Mini" },
       { id: "gpt-5-nano", name: "GPT-5 Nano (Ultra-Fast)" },
     ],
@@ -89,10 +92,23 @@ export default function Home() {
     setCurrentThreadId(id);
   };
 
+  useEffect(() => {
+    const handleThreadChange = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      if (customEvent.detail && customEvent.detail.threadId) {
+        setCurrentThreadId(customEvent.detail.threadId);
+        localStorage.setItem("assistant_current_thread_id", customEvent.detail.threadId);
+      }
+    };
+
+    window.addEventListener("assistant-change-thread", handleThreadChange);
+    return () => window.removeEventListener("assistant-change-thread", handleThreadChange);
+  }, []);
+
   const currentModelName = MODEL_OPTIONS.flatMap(g => g.options).find(o => o.id === selectedModel)?.name || selectedModel;
 
   return (
-    <MyAssistantRuntimeProvider key={`${currentThreadId}-${selectedModel}-${thinkingEnabled}`} model={selectedModel} thinking={thinkingEnabled}>
+    <MyAssistantRuntimeProvider key={`${currentThreadId}-${selectedModel}-${thinkingEnabled}`} model={selectedModel} thinking={thinkingEnabled} threadId={currentThreadId}>
       <main className="flex h-screen w-screen bg-background overflow-hidden text-foreground">
         {/* Sidebar */}
         <aside 
@@ -107,27 +123,8 @@ export default function Home() {
                <Plus className="h-4 w-4" />
             </Button>
           </div>
-          <div className="flex-1 overflow-y-auto p-2 space-y-2 scrollbar-none">
-             {threads.map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() => handleSwitchThread(t.id)}
-                  className={cn(
-                    "w-full text-left rounded-xl transition-all flex items-center gap-3 group/btn",
-                    sidebarOpen ? "px-3 py-2.5" : "p-3 justify-center",
-                    t.id === currentThreadId 
-                      ? "bg-background shadow-sm border font-medium text-foreground" 
-                      : "hover:bg-background/40 text-muted-foreground hover:text-foreground border border-transparent"
-                  )}
-                  title={t.title || "New Chat"}
-                >
-                  <MessageSquare className={cn(
-                    "size-4 flex-shrink-0 transition-colors",
-                    t.id === currentThreadId ? "text-primary" : "text-muted-foreground group-hover/btn:text-foreground"
-                  )} />
-                  {sidebarOpen && <span className="truncate text-xs font-semibold">{t.title || "New Chat"}</span>}
-                </button>
-             ))}
+          <div className="flex-1 overflow-y-auto w-full">
+            <CustomThreadList isOpen={sidebarOpen} />
           </div>
         </aside>
 
@@ -179,7 +176,7 @@ export default function Home() {
                     </div>
                   )}
                   
-                  {selectedModel.startsWith("gpt-5") && (
+                  {(selectedModel.startsWith("gpt-5") || selectedModel.startsWith("o1") || selectedModel.startsWith("o3")) && (
                     <>
                       <div className="w-[1px] h-3 bg-border mx-1" />
                       <label className="flex items-center gap-1.5 px-2 cursor-pointer group">
@@ -202,10 +199,23 @@ export default function Home() {
               <Button
                 variant="ghost"
                 size="icon"
-                onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-                className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                onClick={() => {
+                  if (!(document as any).startViewTransition) {
+                    setTheme(theme === "dark" ? "light" : "dark");
+                    return;
+                  }
+                  (document as any).startViewTransition(() => {
+                    setTheme(theme === "dark" ? "light" : "dark");
+                  });
+                }}
+                className="h-8 w-8 text-muted-foreground hover:text-foreground relative overflow-hidden"
               >
-                {mounted && (theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />)}
+                {mounted && (
+                  <>
+                    <Sun className="h-4 w-4 absolute transition-all scale-100 rotate-0 dark:scale-0 dark:rotate-90" />
+                    <Moon className="h-4 w-4 absolute transition-all scale-0 rotate-90 dark:scale-100 dark:rotate-0" />
+                  </>
+                )}
               </Button>
             </div>
           </header>

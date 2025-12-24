@@ -2,6 +2,7 @@ import os
 import asyncio
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
+from langchain_core.runnables import ConfigurableField
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.tools import load_mcp_tools
 from langgraph.checkpoint.memory import MemorySaver
@@ -42,14 +43,20 @@ class AgentManager:
         tavily_tools = await load_mcp_tools(self.session)
         print(f"Loaded {len(tavily_tools)} tools from Tavily: {[t.name for t in tavily_tools]}")
 
-        # Configure Model
-        model = ChatOpenAI(model="gpt-4.1", temperature=0)
+        # Configure Model with dynamic overrides
+        model = ChatOpenAI(model="gpt-4.1", temperature=0).configurable_fields(
+            model_name=ConfigurableField(id="model_name"),
+            reasoning=ConfigurableField(id="reasoning"),
+            output_version=ConfigurableField(id="output_version"),
+            reasoning_effort=ConfigurableField(id="reasoning_effort")
+        )
 
-        # Configure Subagents
+        # Configure Subagents with the DYNAMIC model
+        # They will now follow the 'model_name' provided by the frontend config.
         research_agent = {
             "name": "research-agent",
             "description": "Expert in global discovery. Use this to find the best URLs and initial facts across the web.",
-            "model": "gpt-4.1", 
+            "model": model,
             "tools": tavily_tools, 
             "system_prompt": "You are a Discovery Expert. Use 'tavily_search' to find top-tier sources and 'tavily_extract' to verify key claims. Your goal is to pass high-quality URLs to the Master for deep-diving."
         }
@@ -57,7 +64,7 @@ class AgentManager:
         crawl_agent = {
             "name": "crawl-agent",
             "description": "Expert in deep extraction. Use this to scrape full text, technical docs, and structured data from specific URLs.",
-            "model": "gpt-4.1",
+            "model": model,
             "tools": tavily_tools,
             "system_prompt": "You are an Extraction Specialist. Your priority is reading the FULL content of a page using 'tavily_extract'. Don't settle for snippets; get the whole story so the Master can synthesize deeply."
         }

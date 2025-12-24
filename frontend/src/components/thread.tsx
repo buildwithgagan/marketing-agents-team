@@ -4,6 +4,7 @@ import {
   UserMessageAttachments,
 } from "@/components/attachment";
 import { MarkdownText } from "@/components/markdown-text";
+import { PerplexityMessage } from "@/components/perplexity-message";
 import { ToolFallback } from "@/components/tool-fallback";
 import { TooltipIconButton } from "@/components/tooltip-icon-button";
 import { Button } from "@/components/ui/button";
@@ -219,7 +220,7 @@ const AssistantMessage: FC = () => {
         <div className="aui-assistant-message-content wrap-break-word text-foreground leading-relaxed">
           <MessagePrimitive.Parts
             components={{
-              Text: MarkdownText,
+              Text: PerplexityMessage,
               tools: { Fallback: ToolFallback },
             }}
           />

@@ -7,8 +7,8 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-poppins);
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -46,6 +46,37 @@
   --radius-3xl: calc(var(--radius) + 12px);
   --radius-4xl: calc(var(--radius) + 16px);
 }
+
+@property --theme-radius {
+  syntax: '<percentage>';
+  inherits: false;
+  initial-value: 0%;
+}
+
+@keyframes theme-toggle {
+  0% {
+    --theme-radius: 0%;
+  }
+  100% {
+    --theme-radius: 200%;
+  }
+}
+
+::view-transition-new(root) {
+  animation: theme-toggle .8s ease-in-out forwards;
+  mask-image: radial-gradient(circle at top right, white var(--theme-radius), transparent calc(var(--theme-radius) + 50px));
+  -webkit-mask-image: radial-gradient(circle at top right, white var(--theme-radius), transparent calc(var(--theme-radius) + 50px));
+  mix-blend-mode: normal;
+  z-index: 2;
+  pointer-events: none;
+}
+
+::view-transition-old(root) {
+  animation: none;
+  z-index: 1;
+  pointer-events: none;
+}
+
 
 :root {
   --radius: 0.625rem;

@@ -8,7 +8,7 @@ dependencies = [
     "deepagents>=0.3.0",
     "tavily-python>=0.7.17",
     "langchain-mcp-adapters>=0.0.1",
-    "langchain-openai>=0.1.0",
+    "langchain-openai>=0.3.26",
     "python-dotenv>=1.0.0",
     "dotenv<1.0.0",
     "fastapi>=0.127.0",

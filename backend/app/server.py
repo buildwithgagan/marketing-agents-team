@@ -56,16 +56,40 @@ async def chat_endpoint(request: Request):
     last_message = messages[-1] if messages else {"content": ""}
     user_input = last_message.get("content", "")
 
-    # We only send the latest message because the agent uses the checkpointer to remember history
+    # Prepare inputs for the agent
     inputs = {"messages": [{"role": "user", "content": user_input}]}
+
+    # Prepare configuration
     config = {
         "configurable": {
             "thread_id": thread_id,
-            "model_name": model_name,
-            "thinking": thinking_enabled
+            "model_name": model_name
         }
     }
+
+    # If it's a reasoning model (GPT-5 series) and thinking is ENABLED
+    if model_name.startswith("gpt-5") and thinking_enabled:
+        reasoning_config = {
+            "effort": "high",
+            "summary": "auto" 
+        }
+        config["configurable"]["reasoning"] = reasoning_config
+        config["configurable"]["output_version"] = "responses/v1"
+        config["configurable"]["reasoning_effort"] = "high"
+    elif model_name.startswith("gpt-5"):
+        # For GPT-5 with thinking DISABLED, we still use responses/v1 but MINIMAL effort
+        # or we could skip it entirely if it supports standard chat.
+        # Let's try minimal effort for a "classic" feel.
+        config["configurable"]["reasoning"] = {"effort": "low"}
+        config["configurable"]["output_version"] = "responses/v1"
+        config["configurable"]["reasoning_effort"] = "low"
     
+    # Handle o1/o3 which ALSO support reasoning_effort
+    if (model_name.startswith("o1") or model_name.startswith("o3")) and thinking_enabled:
+        config["configurable"]["reasoning_effort"] = "high"
+    elif model_name.startswith("o1") or model_name.startswith("o3"):
+        config["configurable"]["reasoning_effort"] = "low"
+
     logger.info(f"User Query (Thread: {thread_id}, Model: {model_name}, Thinking: {thinking_enabled}): {user_input}")
 
     async def event_generator():
@@ -76,26 +100,57 @@ async def chat_endpoint(request: Request):
                 
                 # Todo List / Planning updates
                 if kind == "on_chain_end" and name == "TodoListMiddleware":
+                    # ... (rest of planning logic) ...
                     output = event["data"].get("output")
                     if output and isinstance(output, dict) and "todo_list" in output:
                         todo_data = output["todo_list"]
-                        # Extract list if it's the Perplexity-style {todos: [...]} object
                         if isinstance(todo_data, dict) and "todos" in todo_data:
                             todo_data = todo_data["todos"]
-                        
-                        # Final safety: If it's still not a list, make it one
                         if not isinstance(todo_data, list):
                             todo_data = [str(todo_data)]
-                        
                         yield json.dumps({"type": "plan", "content": todo_data}) + "\n"
 
                 # Token streaming
                 if kind == "on_chat_model_stream":
                     chunk = event["data"].get("chunk")
                     if chunk:
-                        content = getattr(chunk, "content", "")
-                        if content:
-                            yield json.dumps({"type": "content", "content": content}) + "\n"
+                        thought = None
+                        
+                        # Handle Responses API format (list-based content)
+                        if isinstance(chunk.content, list):
+                            for block in chunk.content:
+                                block_type = block.get("type")
+                                if block_type == "reasoning":
+                                    # Streaming reasoning summary text if available
+                                    thought = block.get("text") or block.get("content")
+                                    if not thought and block.get("summary"):
+                                        summaries = block.get("summary")
+                                        if isinstance(summaries, list) and len(summaries) > 0:
+                                            thought = "\n".join([str(s.get("text", "")) for s in summaries if s.get("text")])
+                                
+                                elif block_type == "text":
+                                    content = block.get("text", "")
+                                    if content:
+                                        yield json.dumps({"type": "content", "content": content}) + "\n"
+                        
+                        # Extract reasoning content from attributes (Fallback & Standard)
+                        # This works for both Responses API and standard API
+                        attr_thought = (
+                            getattr(chunk, "reasoning_content", None) or 
+                            chunk.additional_kwargs.get("reasoning_content") or
+                            chunk.additional_kwargs.get("thought") or
+                            chunk.additional_kwargs.get("thinking")
+                        )
+                        
+                        if attr_thought:
+                            thought = (thought + "\n" + attr_thought) if thought else attr_thought
+
+                        if thought:
+                             yield json.dumps({"type": "thought", "content": thought}) + "\n"
+                        
+                        # Standard string content
+                        if isinstance(chunk.content, str) and chunk.content:
+                            yield json.dumps({"type": "content", "content": chunk.content}) + "\n"
                 
                 # Node transition / Status updates
                 elif kind == "on_chain_start":
