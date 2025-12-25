@@ -1,9 +1,10 @@
 "use client";
 
-import { Globe, Telescope, Sparkles } from "lucide-react";
+import { Globe, Telescope, Sparkles, Coffee } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
 
+// Mode type: null represents "brew" mode (the default)
 export type Mode = "search" | "research" | null;
 
 interface ModeSelectorProps {

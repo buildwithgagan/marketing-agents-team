@@ -95,17 +95,38 @@ function InnerRuntimeProvider({
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let accumulatedContent = "";
+        let statusLine = ""; // Track current status separately
         let buffer = "";
+        let pendingYield = false;
+        let lastYieldTime = 0;
+        const MIN_YIELD_INTERVAL = 16; // ~60fps for smooth streaming without browser hang
+
+        // Helper to throttle yields
+        const shouldYield = () => {
+          const now = Date.now();
+          if (now - lastYieldTime >= MIN_YIELD_INTERVAL) {
+            lastYieldTime = now;
+            return true;
+          }
+          pendingYield = true;
+          return false;
+        };
 
         try {
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
 
+            // Decode and process immediately for smooth streaming
             buffer += decoder.decode(value, { stream: true });
+            
+            // Split on newlines - each complete line is a JSON event
             const lines = buffer.split("\n");
+            // Keep incomplete line in buffer
             buffer = lines.pop() || "";
 
+            let contentUpdated = false;
+            
             for (const line of lines) {
               if (!line.trim()) continue;
               try {
@@ -116,37 +137,137 @@ function InnerRuntimeProvider({
                     accumulatedContent += "\n\n> **Thinking**\n> ";
                   }
                   accumulatedContent += data.content.replaceAll("\n", "\n> ");
-                  yield {
-                    content: [{ type: "text", text: accumulatedContent }],
-                  };
+                  contentUpdated = true;
                 } else if (data.type === "content") {
-                  accumulatedContent += data.content;
-                  yield {
-                    content: [{ type: "text", text: accumulatedContent }],
-                  };
+                  const content = data.content;
+                  if (content) {
+                    // Only filter if the ENTIRE content looks like JSON (not just a bracket in text)
+                    const trimmed = content.trim();
+                    const looksLikeJson = (trimmed.startsWith('{"') && trimmed.endsWith('}')) || 
+                                          (trimmed.startsWith('[{') && trimmed.endsWith(']'));
+                    if (!looksLikeJson) {
+                      accumulatedContent += content;
+                      contentUpdated = true;
+                    }
+                  }
                 } else if (data.type === "status") {
-                  accumulatedContent += `\n\n> **Status:** ${data.content}`;
+                  // Show status as a temporary indicator, don't accumulate
+                  statusLine = data.content;
+                  // Always yield status updates immediately
                   yield {
-                    content: [{ type: "text", text: accumulatedContent }],
+                    content: [{ type: "text", text: accumulatedContent + `\n\n---\n*${statusLine}*` }],
                   };
+                  lastYieldTime = Date.now();
                 } else if (data.type === "tool_start") {
-                  accumulatedContent += `\n\n> 🔍 **Running ${data.tool_name || data.tool || "tool"}**...`;
+                  // Show tool activity as temporary status
+                  const toolName = data.tool_name || data.tool || "tool";
+                  statusLine = `🔍 Running ${toolName}...`;
+                  yield {
+                    content: [{ type: "text", text: accumulatedContent + `\n\n---\n*${statusLine}*` }],
+                  };
+                  lastYieldTime = Date.now();
+                } else if (data.type === "plan_delta") {
+                  // Brew mode incremental task plan streaming
+                  if (!accumulatedContent.includes("### 🎯 Task Plan")) {
+                    accumulatedContent += `\n\n### 🎯 Task Plan\n`;
+                    if (data.reasoning) {
+                      accumulatedContent += `\n> ${data.reasoning}\n`;
+                    }
+                  }
+                  const emoji: Record<string, string> = {
+                    research: "🔍",
+                    content: "✍️",
+                    analytics: "📊",
+                    social: "📱",
+                    general: "💬",
+                  };
+                  const worker = data.worker || "worker";
+                  const task = data.task || "";
+                  accumulatedContent += `\n- ${emoji[worker] || "📋"} **${worker}**: ${task}`;
+                  // Yield immediately so the plan visibly grows line-by-line
                   yield {
                     content: [{ type: "text", text: accumulatedContent }],
                   };
+                  lastYieldTime = Date.now();
                 } else if (data.type === "plan") {
-                  const planText = Array.isArray(data.content) 
-                    ? data.content.map((todo: any) => `- ${todo.task || todo}`).join("\n")
-                    : String(data.content);
-                  accumulatedContent += `\n\n### Execution Plan:\n${planText}`;
+                  // Handle brew mode task plans
+                  let planText = "";
+                  if (Array.isArray(data.content)) {
+                    planText = data.content.map((item: any) => {
+                      // Brew mode format: { worker, task, priority }
+                      if (item.worker && item.task) {
+                        const emoji: Record<string, string> = {
+                          research: "🔍",
+                          content: "✍️",
+                          analytics: "📊",
+                          social: "📱"
+                        };
+                        return `- ${emoji[item.worker] || "📋"} **${item.worker}**: ${item.task}`;
+                      }
+                      // Legacy format
+                      return `- ${item.task || item}`;
+                    }).join("\n");
+                  } else {
+                    planText = String(data.content);
+                  }
+                  const reasoning = data.reasoning ? `\n> ${data.reasoning}\n` : "";
+                  accumulatedContent += `\n\n### 🎯 Task Plan\n${reasoning}\n${planText}`;
+                  // Always yield plan immediately
                   yield {
                     content: [{ type: "text", text: accumulatedContent }],
                   };
+                  lastYieldTime = Date.now();
+                } else if (data.type === "worker_start") {
+                  // Brew mode worker start - show as status
+                  const emoji: Record<string, string> = {
+                    research: "🔍",
+                    content: "✍️",
+                    analytics: "📊",
+                    social: "📱",
+                    general: "💬",
+                  };
+                  const worker = data.worker || "worker";
+                  statusLine = `${emoji[worker] || "⏳"} ${worker} working...`;
+                  yield {
+                    content: [{ type: "text", text: accumulatedContent + `\n\n---\n*${statusLine}*` }],
+                  };
+                  lastYieldTime = Date.now();
+                } else if (data.type === "worker_complete") {
+                  // Brew mode worker completion - show as status
+                  const emoji: Record<string, string> = {
+                    research: "🔍",
+                    content: "✍️",
+                    analytics: "📊",
+                    social: "📱",
+                    general: "💬",
+                  };
+                  statusLine = `${emoji[data.worker] || "✅"} ${data.worker} completed`;
+                  yield {
+                    content: [{ type: "text", text: accumulatedContent + `\n\n---\n*${statusLine}*` }],
+                  };
+                  lastYieldTime = Date.now();
+                } else if (data.type === "tool_result") {
+                  // Optionally show tool results briefly
+                  // Skip for cleaner output
                 }
               } catch (e) {
                 console.error("Error parsing NDJSON chunk", e);
               }
             }
+
+            // Throttled yield for content updates (prevents browser hang)
+            if (contentUpdated && shouldYield()) {
+              yield {
+                content: [{ type: "text", text: accumulatedContent }],
+              };
+            }
+          }
+          
+          // Final yield for any pending content
+          if (pendingYield || accumulatedContent) {
+            yield {
+              content: [{ type: "text", text: accumulatedContent }],
+            };
           }
         } finally {
           reader.releaseLock();

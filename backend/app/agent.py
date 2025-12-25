@@ -1,5 +1,13 @@
+"""
+Agent Manager - Central hub for managing all agent modes.
+
+Modes:
+- brew: Multi-agent orchestration with master + worker agents (default)
+- search: Fast, single-agent search for quick answers
+- research: Deep research with multi-agent coordination
+"""
+
 import os
-import asyncio
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.runnables import ConfigurableField
@@ -12,21 +20,47 @@ load_dotenv()
 
 
 class AgentManager:
+    """
+    Manages multiple agent modes and their lifecycle.
+
+    Attributes:
+        agents: Dictionary of compiled graphs by mode name
+        tools: List of available tools (Tavily)
+        checkpointer: Memory checkpointer for conversation history
+    """
+
     def __init__(self):
         self.client = None
         self.session_context = None
         self.session = None
-        self.agents = {}  # Cache agents by mode
+        self.agents = {}
         self.checkpointer = MemorySaver()
-        self.mode = "research"
+        self.tools = []
+        self.model = None
 
     async def initialize(self):
+        """Initialize all agents and tools."""
+        # === Load Tools ===
+        await self._initialize_tools()
+
+        # === Configure Model ===
+        self._configure_model()
+
+        # === Initialize All Modes ===
+        self._initialize_brew_mode()
+        self._initialize_search_mode()
+        self._initialize_research_mode()
+
+        print("Agents initialized successfully for all modes (brew, search, research).")
+
+    async def _initialize_tools(self):
+        """Initialize Tavily MCP tools."""
         tavily_api_key = os.getenv("TAVILY_API_KEY")
         if not tavily_api_key:
             raise ValueError("TAVILY_API_KEY not found in environment.")
 
         mcp_url = f"https://mcp.tavily.com/mcp?tavilyApiKey={tavily_api_key}"
-        print(f"Connecting to Tavily MCP via 'npx mcp-remote' bridge...")
+        print("Connecting to Tavily MCP via 'npx mcp-remote' bridge...")
 
         self.client = MultiServerMCPClient(
             {
@@ -42,115 +76,103 @@ class AgentManager:
         self.session = await self.session_context.__aenter__()
 
         print("Session established. Loading tools...")
-        tavily_tools = await load_mcp_tools(self.session)
+        self.tools = await load_mcp_tools(self.session)
         print(
-            f"Loaded {len(tavily_tools)} tools from Tavily: {[t.name for t in tavily_tools]}"
+            f"Loaded {len(self.tools)} tools from Tavily: {[t.name for t in self.tools]}"
         )
 
-        # Configure Model with dynamic overrides
-        model = ChatOpenAI(model="gpt-4.1", temperature=0).configurable_fields(
+    def _configure_model(self):
+        """Configure the base model with dynamic overrides."""
+        self.model = ChatOpenAI(model="gpt-4.1", temperature=0).configurable_fields(
             model_name=ConfigurableField(id="model_name"),
             reasoning=ConfigurableField(id="reasoning"),
             output_version=ConfigurableField(id="output_version"),
             reasoning_effort=ConfigurableField(id="reasoning_effort"),
         )
 
-        # Configure Subagents with the DYNAMIC model
-        # They will now follow the 'model_name' provided by the frontend config.
-        research_agent = {
-            "name": "research-agent",
-            "description": "Expert in global discovery. Use this to find the best URLs and initial facts across the web.",
-            "model": model,
-            "tools": tavily_tools,
-            "system_prompt": "You are a Discovery Expert. Use 'tavily_search' to find top-tier sources and 'tavily_extract' to verify key claims. Your goal is to pass high-quality URLs to the Master for deep-diving.",
-        }
+    def _initialize_brew_mode(self):
+        """Initialize Brew Mode - Multi-agent orchestration."""
+        from .brew import create_brew_graph
 
-        crawl_agent = {
-            "name": "crawl-agent",
-            "description": "Expert in deep extraction. Use this to scrape full text, technical docs, and structured data from specific URLs.",
-            "model": model,
-            "tools": tavily_tools,
-            "system_prompt": "You are an Extraction Specialist. Your priority is reading the FULL content of a page using 'tavily_extract'. Don't settle for snippets; get the whole story so the Master can synthesize deeply.",
-        }
+        # Full brew graph (orchestrator-worker pattern)
+        # Uses master agent to delegate to specialized workers
+        brew_graph = create_brew_graph(
+            model=self.model,
+            tools=self.tools,
+            checkpointer=self.checkpointer,
+        )
+        self.agents["brew"] = brew_graph
 
-        subagents = [research_agent, crawl_agent]
+        print("  [OK] Brew mode initialized (multi-agent orchestration)")
 
-        # Create agents for both modes
-        # Search mode agent
-        search_system_prompt = """You are a fast, efficient search assistant. Your goal is to provide quick, accurate answers to everyday questions.
+    def _initialize_search_mode(self):
+        """Initialize Search Mode - Fast, single-agent search."""
+        from .search import create_search_graph
 
-### Operational Protocol:
-1. **Quick Search**: Use `tavily_search` to find relevant information quickly.
-2. **Direct Answers**: Provide concise, direct answers based on search results.
-3. **Efficiency**: Focus on speed and clarity. Use search snippets when sufficient.
-4. **When to Extract**: Only use `tavily_extract` if the search snippets don't contain enough information.
+        search_graph = create_search_graph(
+            model=self.model,
+            tools=self.tools,
+            checkpointer=self.checkpointer,
+        )
+        self.agents["search"] = search_graph
 
-Keep responses brief and to the point. Users want fast answers, not deep research reports.
-"""
+        print("  [OK] Search mode initialized")
 
-        # Research mode agent (default)
-        research_system_prompt = """You are the Master Deep Agent, an elite research orchestrator. Your goal is to move beyond simple search engine results and perform true deep research.
-        
-        ### Operational Protocol:
-        
-        #### Phase 1: Planning
-        Generate a comprehensive todo list. Include steps for both Discovery (Search) and Deep-Dive (Extraction).
-        
-        #### Phase 2: Information Gathering (THOROUGH)
-        Research is a two-stage process of Discovery then Extraction.
-        1. **Discovery (Search)**: Use tools like `tavily_search` to find high-quality URLs. **IMPORTANT**: Search snippets are only for discovery; they are NOT sufficient for comprehensive research.
-        2. **Deep-Dive (Extraction)**: For the top 3-5 most relevant URLs found during discovery, you **MUST** use `tavily_extract` or `tavily_crawl` to retrieve the full page content.
-        - **DO NOT** summarize until you have read the actual body text of these primary sources.
-        - **DO NOT** provide a summary after every tool call. Maintain silence while the research agents work.
-        - Execute tools until every research-related todo in your plan is marked as complete.
-        
-        #### Phase 3: Unified Synthesis & Final Report
-        Only when the full content of relevant primary sources has been analyzed, provide your response.
-        - Produce a **Unified Final Report** that is professional, deeply synthesized, and multi-layered.
-        - Connect insights across different extracted sources.
-        - End with a dedicated "Sources & References" section.
-        
-        ### Visualization Note:
-        The UI visualizes your progress automatically. Focus your output on elite synthesis. If you are still in Phase 2, proceed through the plan without stopping to chat until the deep extraction is complete.
+    def _initialize_research_mode(self):
+        """Initialize Research Mode - Deep research with subagents."""
+        from .research import create_research_graph
+
+        research_graph = create_research_graph(
+            model=self.model,
+            tools=self.tools,
+            checkpointer=self.checkpointer,
+        )
+        self.agents["research"] = research_graph
+
+        print("  [OK] Research mode initialized")
+
+    def get_agent(self, mode: str = None):
         """
+        Get the agent for the specified mode.
 
-        from deepagents import create_deep_agent
+        Args:
+            mode: The mode to use. Options:
+                - None or "brew": Multi-agent orchestration (default)
+                - "search": Fast single-agent search
+                - "research": Deep research with subagents
 
-        # Create research agent
-        research_agent_instance = create_deep_agent(
-            model=model,
-            tools=tavily_tools,
-            subagents=subagents,
-            system_prompt=research_system_prompt,
-            checkpointer=self.checkpointer,
-        )
-        self.agents["research"] = research_agent_instance
+        Returns:
+            Compiled graph for the requested mode
 
-        # Create search agent (simpler, no subagents for speed)
-        search_agent_instance = create_deep_agent(
-            model=model,
-            tools=tavily_tools,
-            subagents=[],  # No subagents for faster responses
-            system_prompt=search_system_prompt,
-            checkpointer=self.checkpointer,
-        )
-        self.agents["search"] = search_agent_instance
+        Raises:
+            RuntimeError: If agents not initialized
+        """
+        # Default to brew mode if mode is None or empty
+        if not mode:
+            mode = "brew"
 
-        print("Agents initialized successfully for both modes.")
+        # Normalize mode name
+        mode = mode.lower().strip()
 
-    def get_agent(self, mode: str = "research"):
-        """Get or create an agent for the specified mode"""
         if mode not in self.agents:
-            # Use research agent as fallback if mode not found
-            if "research" in self.agents:
-                return self.agents["research"]
+            # Fallback to brew if mode not found
+            if "brew" in self.agents:
+                print(f"Mode '{mode}' not found, falling back to 'brew'")
+                return self.agents["brew"]
             raise RuntimeError("Agent not initialized. Call initialize() first.")
+
         return self.agents[mode]
 
+    def list_modes(self) -> list:
+        """List all available modes."""
+        return list(self.agents.keys())
+
     async def cleanup(self):
+        """Cleanup resources."""
         if self.session_context:
             await self.session_context.__aexit__(None, None, None)
             print("MCP session closed.")
 
 
+# Global agent manager instance
 agent_manager = AgentManager()
