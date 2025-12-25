@@ -8,19 +8,20 @@ import os
 import logging
 from typing import Optional
 import asyncio
+import sys
 
 # Configure logging (ensure handler even when uvicorn overrides root config)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler()],
+    handlers=[logging.StreamHandler(sys.stdout)],
+    force=True,  # Force reconfiguration of the root logger
 )
 logger = logging.getLogger("deepagent-api")
 DEBUG_EVENTS = os.getenv("DEEPAGENT_DEBUG_EVENTS", "").strip() == "1"
 logger.setLevel(logging.DEBUG if DEBUG_EVENTS else logging.INFO)
 if not logger.handlers:
     logger.addHandler(logging.StreamHandler())
-logger.propagate = False
 
 
 @asynccontextmanager
