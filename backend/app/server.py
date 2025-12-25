@@ -3,26 +3,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from .agent import agent_manager
 import json
-import asyncio
 from contextlib import asynccontextmanager
 import os
-from dotenv import load_dotenv
 import logging
-
-# Load env variables
-load_dotenv()
-
-PORT = int(os.getenv("PORT", 8000))
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler()
-    ]
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler()],
 )
 logger = logging.getLogger("deepagent-api")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -36,6 +28,7 @@ async def lifespan(app: FastAPI):
     await agent_manager.cleanup()
     logger.info("Cleanup complete.")
 
+
 app = FastAPI(lifespan=lifespan)
 
 # Allow CORS for frontend
@@ -47,9 +40,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}
+
 
 @app.post("/api/chat")
 async def chat_endpoint(request: Request):
@@ -58,7 +53,7 @@ async def chat_endpoint(request: Request):
     thread_id = data.get("thread_id", "default-thread")
     model_name = data.get("model", "gpt-4.1")
     thinking_enabled = data.get("thinking", False)
-    
+
     last_message = messages[-1] if messages else {"content": ""}
     user_input = last_message.get("content", "")
 
@@ -66,19 +61,11 @@ async def chat_endpoint(request: Request):
     inputs = {"messages": [{"role": "user", "content": user_input}]}
 
     # Prepare configuration
-    config = {
-        "configurable": {
-            "thread_id": thread_id,
-            "model_name": model_name
-        }
-    }
+    config = {"configurable": {"thread_id": thread_id, "model_name": model_name}}
 
     # If it's a reasoning model (GPT-5 series) and thinking is ENABLED
     if model_name.startswith("gpt-5") and thinking_enabled:
-        reasoning_config = {
-            "effort": "high",
-            "summary": "auto" 
-        }
+        reasoning_config = {"effort": "high", "summary": "auto"}
         config["configurable"]["reasoning"] = reasoning_config
         config["configurable"]["output_version"] = "responses/v1"
         config["configurable"]["reasoning_effort"] = "high"
@@ -89,21 +76,27 @@ async def chat_endpoint(request: Request):
         config["configurable"]["reasoning"] = {"effort": "low"}
         config["configurable"]["output_version"] = "responses/v1"
         config["configurable"]["reasoning_effort"] = "low"
-    
+
     # Handle o1/o3 which ALSO support reasoning_effort
-    if (model_name.startswith("o1") or model_name.startswith("o3")) and thinking_enabled:
+    if (
+        model_name.startswith("o1") or model_name.startswith("o3")
+    ) and thinking_enabled:
         config["configurable"]["reasoning_effort"] = "high"
     elif model_name.startswith("o1") or model_name.startswith("o3"):
         config["configurable"]["reasoning_effort"] = "low"
 
-    logger.info(f"User Query (Thread: {thread_id}, Model: {model_name}, Thinking: {thinking_enabled}): {user_input}")
+    logger.info(
+        f"User Query (Thread: {thread_id}, Model: {model_name}, Thinking: {thinking_enabled}): {user_input}"
+    )
 
     async def event_generator():
         try:
-            async for event in agent_manager.agent.astream_events(inputs, config=config, version="v2"):
+            async for event in agent_manager.agent.astream_events(
+                inputs, config=config, version="v2"
+            ):
                 kind = event["event"]
                 name = event.get("name", "")
-                
+
                 # Todo List / Planning updates
                 if kind == "on_chain_end" and name == "TodoListMiddleware":
                     # ... (rest of planning logic) ...
@@ -121,7 +114,7 @@ async def chat_endpoint(request: Request):
                     chunk = event["data"].get("chunk")
                     if chunk:
                         thought = None
-                        
+
                         # Handle Responses API format (list-based content)
                         if isinstance(chunk.content, list):
                             for block in chunk.content:
@@ -131,36 +124,60 @@ async def chat_endpoint(request: Request):
                                     thought = block.get("text") or block.get("content")
                                     if not thought and block.get("summary"):
                                         summaries = block.get("summary")
-                                        if isinstance(summaries, list) and len(summaries) > 0:
-                                            thought = "\n".join([str(s.get("text", "")) for s in summaries if s.get("text")])
-                                
+                                        if (
+                                            isinstance(summaries, list)
+                                            and len(summaries) > 0
+                                        ):
+                                            thought = "\n".join(
+                                                [
+                                                    str(s.get("text", ""))
+                                                    for s in summaries
+                                                    if s.get("text")
+                                                ]
+                                            )
+
                                 elif block_type == "text":
                                     content = block.get("text", "")
                                     if content:
-                                        yield json.dumps({"type": "content", "content": content}) + "\n"
-                        
+                                        yield json.dumps(
+                                            {"type": "content", "content": content}
+                                        ) + "\n"
+
                         # Extract reasoning content from attributes (Fallback & Standard)
                         # This works for both Responses API and standard API
                         attr_thought = (
-                            getattr(chunk, "reasoning_content", None) or 
-                            chunk.additional_kwargs.get("reasoning_content") or
-                            chunk.additional_kwargs.get("thought") or
-                            chunk.additional_kwargs.get("thinking")
+                            getattr(chunk, "reasoning_content", None)
+                            or chunk.additional_kwargs.get("reasoning_content")
+                            or chunk.additional_kwargs.get("thought")
+                            or chunk.additional_kwargs.get("thinking")
                         )
-                        
+
                         if attr_thought:
-                            thought = (thought + "\n" + attr_thought) if thought else attr_thought
+                            thought = (
+                                (thought + "\n" + attr_thought)
+                                if thought
+                                else attr_thought
+                            )
 
                         if thought:
-                             yield json.dumps({"type": "thought", "content": thought}) + "\n"
-                        
+                            yield json.dumps(
+                                {"type": "thought", "content": thought}
+                            ) + "\n"
+
                         # Standard string content
                         if isinstance(chunk.content, str) and chunk.content:
-                            yield json.dumps({"type": "content", "content": chunk.content}) + "\n"
-                
+                            yield json.dumps(
+                                {"type": "content", "content": chunk.content}
+                            ) + "\n"
+
                 # Node transition / Status updates
                 elif kind == "on_chain_start":
-                    if name in ["research-agent", "crawl-agent", "master-agent", "agent"]:
+                    if name in [
+                        "research-agent",
+                        "crawl-agent",
+                        "master-agent",
+                        "agent",
+                    ]:
                         status_map = {
                             "research-agent": "Deep researching using Tavily...",
                             "crawl-agent": "Crawling website data...",
@@ -168,42 +185,50 @@ async def chat_endpoint(request: Request):
                             "agent": "Thinking and planning...",
                         }
                         friendly_status = status_map.get(name, f"Processing: {name}")
-                        yield json.dumps({"type": "status", "content": friendly_status}) + "\n"
-                
+                        yield json.dumps(
+                            {"type": "status", "content": friendly_status}
+                        ) + "\n"
+
                 # Tool calls (Start)
                 elif kind == "on_tool_start":
                     tool_name = name or "tool"
-                    
+
                     # Filter out internal planning tools from the search progress UI
                     if tool_name in ["write_todos", "update_todos"]:
                         continue
-                        
+
                     raw_input = event["data"].get("input", "")
-                    
+
                     # Clean up input for the UI: Extract 'query' and remove 'runtime'/technical noise
                     tool_input = ""
                     if isinstance(raw_input, dict):
                         # Use 'query' if available, otherwise 'url', then fall back to full dict minus technical keys
                         tool_input = raw_input.get("query") or raw_input.get("url")
                         if not tool_input:
-                            ui_input = {k: v for k, v in raw_input.items() if k not in ["runtime", "state"]}
+                            ui_input = {
+                                k: v
+                                for k, v in raw_input.items()
+                                if k not in ["runtime", "state"]
+                            }
                             tool_input = json.dumps(ui_input)
                     else:
                         tool_input = str(raw_input)
-                    
+
                     # Truncate if too long for the search progress bubble
                     if len(tool_input) > 80:
                         tool_input = tool_input[:77] + "..."
 
                     logger.info(f"Tool Call Start: {tool_name} with {tool_input}")
-                    yield json.dumps({
-                        "type": "tool_start", 
-                        "tool": tool_name, 
-                        "content": f"Running {tool_name}...", 
-                        "input": tool_input,
-                        "tool_name": tool_name
-                    }) + "\n"
-                
+                    yield json.dumps(
+                        {
+                            "type": "tool_start",
+                            "tool": tool_name,
+                            "content": f"Running {tool_name}...",
+                            "input": tool_input,
+                            "tool_name": tool_name,
+                        }
+                    ) + "\n"
+
                 # Tool results (End)
                 elif kind == "on_tool_end":
                     tool_name = name or "tool"
@@ -213,22 +238,29 @@ async def chat_endpoint(request: Request):
                     output = event["data"].get("output")
                     if output:
                         # Silently skip outputs that are internal framework Commands
-                        if "Command(" in str(output) or hasattr(output, "update") or hasattr(output, "goto"):
-                             continue
+                        if (
+                            "Command(" in str(output)
+                            or hasattr(output, "update")
+                            or hasattr(output, "goto")
+                        ):
+                            continue
 
                         # Extract content from ToolMessage or raw list/dict
                         raw_content = getattr(output, "content", output)
-                        
+
                         # Handle list of content blocks
                         if isinstance(raw_content, list):
                             text_parts = []
                             for part in raw_content:
-                                if isinstance(part, dict) and part.get("type") == "text":
+                                if (
+                                    isinstance(part, dict)
+                                    and part.get("type") == "text"
+                                ):
                                     text_parts.append(part.get("text", ""))
                                 elif isinstance(part, str):
                                     text_parts.append(part)
                             raw_content = "\n".join(text_parts)
-                        
+
                         # If content is still not a string, or is a JSON string, try to make it pretty
                         if not isinstance(raw_content, str):
                             try:
@@ -238,8 +270,11 @@ async def chat_endpoint(request: Request):
                         else:
                             try:
                                 stripped = raw_content.strip()
-                                if (stripped.startswith('{') and stripped.endswith('}')) or \
-                                   (stripped.startswith('[') and stripped.endswith(']')):
+                                if (
+                                    stripped.startswith("{") and stripped.endswith("}")
+                                ) or (
+                                    stripped.startswith("[") and stripped.endswith("]")
+                                ):
                                     parsed = json.loads(stripped)
                                     display_content = json.dumps(parsed, indent=2)
                                     display_content = f"```json\n{display_content}\n```"
@@ -248,18 +283,16 @@ async def chat_endpoint(request: Request):
                             except:
                                 display_content = raw_content
 
-                        yield json.dumps({
-                            "type": "tool_result", 
-                            "tool": tool_name,
-                            "content": display_content 
-                        }) + "\n"
+                        yield json.dumps(
+                            {
+                                "type": "tool_result",
+                                "tool": tool_name,
+                                "content": display_content,
+                            }
+                        ) + "\n"
 
         except Exception as e:
             logger.error(f"Error in astream_events: {e}", exc_info=True)
             yield json.dumps({"type": "error", "content": str(e)}) + "\n"
 
     return StreamingResponse(event_generator(), media_type="application/x-ndjson")
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="localhost", port=PORT, reload=True)
