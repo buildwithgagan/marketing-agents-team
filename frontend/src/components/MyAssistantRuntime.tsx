@@ -64,6 +64,9 @@ function InnerRuntimeProvider({
   const MyModelAdapter: ChatModelAdapter = useMemo(() => ({
     async *run({ messages, abortSignal }) {
       try {
+        // Get mode from sessionStorage
+        const mode = sessionStorage.getItem("assistant_mode") || null;
+        
         const response = await fetch("http://localhost:8000/api/chat", {
           method: "POST",
           headers: {
@@ -80,6 +83,7 @@ function InnerRuntimeProvider({
             thread_id: threadId,
             model,
             thinking,
+            mode, // Add mode to the request
           }),
           signal: abortSignal,
         });

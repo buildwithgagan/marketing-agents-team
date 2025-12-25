@@ -126,11 +126,21 @@ export default function Home() {
   return (
     <MyAssistantRuntimeProvider key={`${currentThreadId}-${selectedModel}-${thinkingEnabled}`} model={selectedModel} thinking={thinkingEnabled} threadId={currentThreadId}>
       <main className="flex h-screen w-screen bg-background overflow-hidden text-foreground">
+        {/* Mobile Sidebar Overlay */}
+        {sidebarOpen && (
+          <div 
+            className="fixed inset-0 bg-black/50 z-40 md:hidden"
+            onClick={() => setSidebarOpen(false)}
+          />
+        )}
+        
         {/* Sidebar */}
         <aside 
           className={cn(
-            "border-r bg-muted/30 transition-all duration-300 ease-in-out flex flex-col relative group",
-            sidebarOpen ? "w-64" : "w-16"
+            "border-r bg-muted/30 transition-all duration-300 ease-in-out flex flex-col relative group z-50",
+            sidebarOpen ? "w-64" : "w-16",
+            "fixed md:relative h-full",
+            sidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
           )}
         >
           <div className={cn("flex items-center border-b flex-shrink-0 h-14", sidebarOpen ? "p-4" : "p-2 justify-center")}>
@@ -151,13 +161,21 @@ export default function Home() {
         </aside>
 
         {/* Main Content */}
-        <div className="flex-1 flex flex-col relative overflow-hidden bg-background">
-          <header className="h-14 border-b flex items-center px-4 gap-4 flex-shrink-0 bg-background/80 backdrop-blur-md z-10">
+        <div className="flex-1 flex flex-col relative overflow-hidden bg-background w-full md:ml-0">
+          <header className="h-14 border-b flex items-center px-2 sm:px-4 gap-2 sm:gap-4 flex-shrink-0 bg-background/80 backdrop-blur-md z-10">
             <Button
               variant="ghost"
               size="icon"
               onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="h-8 w-8 text-muted-foreground hover:text-foreground"
+              className="h-8 w-8 text-muted-foreground hover:text-foreground md:hidden"
+            >
+              <PanelLeftOpen className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              className="h-8 w-8 text-muted-foreground hover:text-foreground hidden md:flex"
             >
               <PanelLeftOpen className={cn("h-4 w-4 transition-transform", sidebarOpen && "rotate-180")} />
             </Button>
@@ -166,14 +184,14 @@ export default function Home() {
                <div className="flex items-center bg-secondary/30 rounded-lg p-0.5 border relative" ref={dropdownRef}>
                   <button
                     onClick={() => setIsModelDropdownOpen(!isModelDropdownOpen)}
-                    className="flex items-center gap-2 px-3 py-1 text-[11px] font-bold hover:bg-secondary/50 rounded-md transition-colors"
+                    className="flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1 text-[10px] sm:text-[11px] font-bold hover:bg-secondary/50 rounded-md transition-colors whitespace-nowrap"
                   >
-                    <span>{currentModelName}</span>
-                    <ChevronDown className={cn("size-3 transition-transform", isModelDropdownOpen && "rotate-180")} />
+                    <span className="truncate">{currentModelName}</span>
+                    <ChevronDown className={cn("size-3 transition-transform flex-shrink-0", isModelDropdownOpen && "rotate-180")} />
                   </button>
 
                   {isModelDropdownOpen && (
-                    <div className="absolute top-full left-0 mt-1 w-64 bg-popover border border-border rounded-xl shadow-2xl z-50 py-2 animate-in fade-in slide-in-from-top-1">
+                    <div className="absolute top-full left-0 mt-1 w-64 max-w-[calc(100vw-2rem)] bg-popover border border-border rounded-xl shadow-2xl z-50 py-2 animate-in fade-in slide-in-from-top-1">
                       {MODEL_OPTIONS.map((group) => (
                         <div key={group.label} className="mb-2 last:mb-0">
                           <div className="px-3 py-1 text-[10px] font-bold text-muted-foreground uppercase tracking-widest">{group.label}</div>
@@ -185,7 +203,7 @@ export default function Home() {
                                 setIsModelDropdownOpen(false);
                               }}
                               className={cn(
-                                "w-full text-left px-3 py-2 text-xs flex items-center justify-between transition-colors",
+                                "w-full text-left px-3 py-2 text-xs flex items-center justify-between transition-colors rounded-md",
                                 selectedModel === opt.id ? "bg-primary/10 text-primary" : "hover:bg-muted"
                               )}
                             >
@@ -200,15 +218,15 @@ export default function Home() {
                   
                   {(selectedModel.startsWith("gpt-5") || selectedModel.startsWith("o1") || selectedModel.startsWith("o3")) && (
                     <>
-                      <div className="w-[1px] h-3 bg-border mx-1" />
-                      <label className="flex items-center gap-1.5 px-2 cursor-pointer group">
+                      <div className="w-[1px] h-3 bg-border mx-1 hidden sm:block" />
+                      <label className="flex items-center gap-1 sm:gap-1.5 px-1 sm:px-2 cursor-pointer group">
                         <input 
                           type="checkbox" 
                           checked={thinkingEnabled} 
                           onChange={(e) => setThinkingEnabled(e.target.checked)}
                           className="size-3 rounded border-muted-foreground/30 accent-primary"
                         />
-                        <span className="text-[10px] font-semibold text-muted-foreground group-hover:text-foreground transition-colors uppercase tracking-tight">Thinking</span>
+                        <span className="text-[9px] sm:text-[10px] font-semibold text-muted-foreground group-hover:text-foreground transition-colors uppercase tracking-tight hidden sm:inline">Thinking</span>
                       </label>
                     </>
                   )}

@@ -9,8 +9,9 @@ const poppins = Poppins({
 });
 
 export const metadata: Metadata = {
-  title: "DeepAgent | Intelligent Research Assistant",
-  description: "Next-generation research agent powered by Tavily MCP and DeepAgents framework.",
+  title: "BrewX | Intelligent Marketing Assistant",
+  description:
+    "AI-powered marketing assistant for research, search, and content creation.",
 };
 
 import { Toaster } from "sonner";
@@ -24,9 +25,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body
-        className={`${poppins.variable} antialiased`}
-      >
+      <body className={`${poppins.variable} antialiased`}>
         <ThemeProvider
           attribute="class"
           defaultTheme="system"

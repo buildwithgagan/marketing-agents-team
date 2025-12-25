@@ -1,0 +1,74 @@
+<svg viewBox="0 0 180 180" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="appleGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="1" />
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.85" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Coffee cup body -->
+  <path
+    d="M45 50 L45 120 L105 120 L105 50 L45 50 Z"
+    fill="url(#appleGradient)"
+    stroke="#ffffff"
+    stroke-width="4"
+  />
+  
+  <!-- Cup handle -->
+  <path
+    d="M105 70 Q120 70 120 90 Q120 110 105 110"
+    stroke="#ffffff"
+    stroke-width="6"
+    fill="none"
+    stroke-linecap="round"
+  />
+  
+  <!-- Coffee surface -->
+  <ellipse
+    cx="75"
+    cy="50"
+    rx="30"
+    ry="8"
+    fill="#ffffff"
+    opacity="0.6"
+  />
+  
+  <!-- Steam lines forming X pattern -->
+  <path
+    d="M60 30 L70 20"
+    stroke="#ffffff"
+    stroke-width="5"
+    stroke-linecap="round"
+    opacity="0.8"
+  />
+  <path
+    d="M70 20 L60 10"
+    stroke="#ffffff"
+    stroke-width="5"
+    stroke-linecap="round"
+    opacity="0.8"
+  />
+  <path
+    d="M90 30 L80 20"
+    stroke="#ffffff"
+    stroke-width="5"
+    stroke-linecap="round"
+    opacity="0.8"
+  />
+  <path
+    d="M80 20 L90 10"
+    stroke="#ffffff"
+    stroke-width="5"
+    stroke-linecap="round"
+    opacity="0.8"
+  />
+  
+  <!-- X accent in the cup -->
+  <path
+    d="M65 80 L85 100 M85 80 L65 100"
+    stroke="#ffffff"
+    stroke-width="6"
+    stroke-linecap="round"
+    opacity="0.4"
+  />
+</svg>

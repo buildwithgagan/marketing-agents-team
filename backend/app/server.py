@@ -53,6 +53,9 @@ async def chat_endpoint(request: Request):
     thread_id = data.get("thread_id", "default-thread")
     model_name = data.get("model", "gpt-4.1")
     thinking_enabled = data.get("thinking", False)
+    mode = data.get(
+        "mode", "research"
+    )  # Default to research for backward compatibility
 
     last_message = messages[-1] if messages else {"content": ""}
     user_input = last_message.get("content", "")
@@ -61,7 +64,9 @@ async def chat_endpoint(request: Request):
     inputs = {"messages": [{"role": "user", "content": user_input}]}
 
     # Prepare configuration
-    config = {"configurable": {"thread_id": thread_id, "model_name": model_name}}
+    config = {
+        "configurable": {"thread_id": thread_id, "model_name": model_name, "mode": mode}
+    }
 
     # If it's a reasoning model (GPT-5 series) and thinking is ENABLED
     if model_name.startswith("gpt-5") and thinking_enabled:
@@ -86,12 +91,15 @@ async def chat_endpoint(request: Request):
         config["configurable"]["reasoning_effort"] = "low"
 
     logger.info(
-        f"User Query (Thread: {thread_id}, Model: {model_name}, Thinking: {thinking_enabled}): {user_input}"
+        f"User Query (Thread: {thread_id}, Model: {model_name}, Mode: {mode}, Thinking: {thinking_enabled}): {user_input}"
     )
+
+    # Get the appropriate agent for the mode
+    agent = agent_manager.get_agent(mode)
 
     async def event_generator():
         try:
-            async for event in agent_manager.agent.astream_events(
+            async for event in agent.astream_events(
                 inputs, config=config, version="v2"
             ):
                 kind = event["event"]

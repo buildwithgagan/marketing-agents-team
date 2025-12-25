@@ -10,13 +10,15 @@ from langgraph.checkpoint.memory import MemorySaver
 # Load env variables
 load_dotenv()
 
+
 class AgentManager:
     def __init__(self):
         self.client = None
         self.session_context = None
         self.session = None
-        self.agent = None
+        self.agents = {}  # Cache agents by mode
         self.checkpointer = MemorySaver()
+        self.mode = "research"
 
     async def initialize(self):
         tavily_api_key = os.getenv("TAVILY_API_KEY")
@@ -31,24 +33,26 @@ class AgentManager:
                 "tavily": {
                     "command": "npx",
                     "args": ["-y", "mcp-remote", mcp_url],
-                    "transport": "stdio"
+                    "transport": "stdio",
                 }
             }
         )
-        
+
         self.session_context = self.client.session("tavily")
         self.session = await self.session_context.__aenter__()
-        
+
         print("Session established. Loading tools...")
         tavily_tools = await load_mcp_tools(self.session)
-        print(f"Loaded {len(tavily_tools)} tools from Tavily: {[t.name for t in tavily_tools]}")
+        print(
+            f"Loaded {len(tavily_tools)} tools from Tavily: {[t.name for t in tavily_tools]}"
+        )
 
         # Configure Model with dynamic overrides
         model = ChatOpenAI(model="gpt-4.1", temperature=0).configurable_fields(
             model_name=ConfigurableField(id="model_name"),
             reasoning=ConfigurableField(id="reasoning"),
             output_version=ConfigurableField(id="output_version"),
-            reasoning_effort=ConfigurableField(id="reasoning_effort")
+            reasoning_effort=ConfigurableField(id="reasoning_effort"),
         )
 
         # Configure Subagents with the DYNAMIC model
@@ -57,8 +61,8 @@ class AgentManager:
             "name": "research-agent",
             "description": "Expert in global discovery. Use this to find the best URLs and initial facts across the web.",
             "model": model,
-            "tools": tavily_tools, 
-            "system_prompt": "You are a Discovery Expert. Use 'tavily_search' to find top-tier sources and 'tavily_extract' to verify key claims. Your goal is to pass high-quality URLs to the Master for deep-diving."
+            "tools": tavily_tools,
+            "system_prompt": "You are a Discovery Expert. Use 'tavily_search' to find top-tier sources and 'tavily_extract' to verify key claims. Your goal is to pass high-quality URLs to the Master for deep-diving.",
         }
 
         crawl_agent = {
@@ -66,12 +70,26 @@ class AgentManager:
             "description": "Expert in deep extraction. Use this to scrape full text, technical docs, and structured data from specific URLs.",
             "model": model,
             "tools": tavily_tools,
-            "system_prompt": "You are an Extraction Specialist. Your priority is reading the FULL content of a page using 'tavily_extract'. Don't settle for snippets; get the whole story so the Master can synthesize deeply."
+            "system_prompt": "You are an Extraction Specialist. Your priority is reading the FULL content of a page using 'tavily_extract'. Don't settle for snippets; get the whole story so the Master can synthesize deeply.",
         }
 
         subagents = [research_agent, crawl_agent]
 
-        system_prompt = """You are the Master Deep Agent, an elite research orchestrator. Your goal is to move beyond simple search engine results and perform true deep research.
+        # Create agents for both modes
+        # Search mode agent
+        search_system_prompt = """You are a fast, efficient search assistant. Your goal is to provide quick, accurate answers to everyday questions.
+
+### Operational Protocol:
+1. **Quick Search**: Use `tavily_search` to find relevant information quickly.
+2. **Direct Answers**: Provide concise, direct answers based on search results.
+3. **Efficiency**: Focus on speed and clarity. Use search snippets when sufficient.
+4. **When to Extract**: Only use `tavily_extract` if the search snippets don't contain enough information.
+
+Keep responses brief and to the point. Users want fast answers, not deep research reports.
+"""
+
+        # Research mode agent (default)
+        research_system_prompt = """You are the Master Deep Agent, an elite research orchestrator. Your goal is to move beyond simple search engine results and perform true deep research.
         
         ### Operational Protocol:
         
@@ -97,18 +115,42 @@ class AgentManager:
         """
 
         from deepagents import create_deep_agent
-        self.agent = create_deep_agent(
+
+        # Create research agent
+        research_agent_instance = create_deep_agent(
             model=model,
             tools=tavily_tools,
             subagents=subagents,
-            system_prompt=system_prompt,
-            checkpointer=self.checkpointer
+            system_prompt=research_system_prompt,
+            checkpointer=self.checkpointer,
         )
-        print("Agent initialized successfully.")
+        self.agents["research"] = research_agent_instance
+
+        # Create search agent (simpler, no subagents for speed)
+        search_agent_instance = create_deep_agent(
+            model=model,
+            tools=tavily_tools,
+            subagents=[],  # No subagents for faster responses
+            system_prompt=search_system_prompt,
+            checkpointer=self.checkpointer,
+        )
+        self.agents["search"] = search_agent_instance
+
+        print("Agents initialized successfully for both modes.")
+
+    def get_agent(self, mode: str = "research"):
+        """Get or create an agent for the specified mode"""
+        if mode not in self.agents:
+            # Use research agent as fallback if mode not found
+            if "research" in self.agents:
+                return self.agents["research"]
+            raise RuntimeError("Agent not initialized. Call initialize() first.")
+        return self.agents[mode]
 
     async def cleanup(self):
         if self.session_context:
             await self.session_context.__aexit__(None, None, None)
             print("MCP session closed.")
+
 
 agent_manager = AgentManager()

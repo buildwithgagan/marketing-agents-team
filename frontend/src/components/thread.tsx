@@ -1,5 +1,4 @@
 import {
-  ComposerAddAttachment,
   ComposerAttachments,
   UserMessageAttachments,
 } from "@/components/attachment";
@@ -30,9 +29,20 @@ import {
   RefreshCwIcon,
   SquareIcon,
   UserIcon,
-  SparklesIcon
+  SparklesIcon,
+  ChevronDownIcon,
+  Globe,
+  Telescope
 } from "lucide-react";
 import type { FC } from "react";
+import { type Mode } from "@/components/mode-selector";
+import { useState, useEffect } from "react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 export const Thread: FC = () => {
   return (
@@ -44,7 +54,7 @@ export const Thread: FC = () => {
     >
       <ThreadPrimitive.Viewport
         turnAnchor="top"
-        className="aui-thread-viewport relative flex flex-1 flex-col overflow-x-auto overflow-y-scroll scroll-smooth px-4 pt-4"
+        className="aui-thread-viewport relative flex flex-1 flex-col overflow-x-auto overflow-y-scroll scroll-smooth px-2 sm:px-4 pt-2 sm:pt-4"
       >
         <AssistantIf condition={({ thread }) => thread.isEmpty}>
           <ThreadWelcome />
@@ -58,7 +68,7 @@ export const Thread: FC = () => {
           }}
         />
 
-        <ThreadPrimitive.ViewportFooter className="aui-thread-viewport-footer sticky bottom-0 mx-auto mt-auto flex w-full max-w-(--thread-max-width) flex-col gap-4 overflow-visible rounded-t-3xl bg-background pb-4 md:pb-6">
+        <ThreadPrimitive.ViewportFooter className="aui-thread-viewport-footer sticky bottom-0 mx-auto mt-auto flex w-full max-w-(--thread-max-width) flex-col gap-2 sm:gap-4 overflow-visible rounded-t-2xl sm:rounded-t-3xl bg-background pb-2 sm:pb-4 md:pb-6 px-2 sm:px-0">
           <ThreadScrollToBottom />
           <Composer />
         </ThreadPrimitive.ViewportFooter>
@@ -86,10 +96,10 @@ const ThreadWelcome: FC = () => {
     <div className="aui-thread-welcome-root mx-auto my-auto flex w-full max-w-(--thread-max-width) grow flex-col">
       <div className="aui-thread-welcome-center flex w-full grow flex-col items-center justify-center">
         <div className="aui-thread-welcome-message flex size-full flex-col justify-center px-4">
-          <h1 className="aui-thread-welcome-message-inner fade-in slide-in-from-bottom-1 animate-in font-semibold text-2xl duration-200">
+          <h1 className="aui-thread-welcome-message-inner fade-in slide-in-from-bottom-1 animate-in font-semibold text-xl sm:text-2xl duration-200">
             Hello there!
           </h1>
-          <p className="aui-thread-welcome-message-inner fade-in slide-in-from-bottom-1 animate-in text-muted-foreground text-xl delay-75 duration-200">
+          <p className="aui-thread-welcome-message-inner fade-in slide-in-from-bottom-1 animate-in text-muted-foreground text-base sm:text-xl delay-75 duration-200">
             How can I help you today?
           </p>
         </div>
@@ -113,8 +123,33 @@ const SUGGESTIONS = [
 ] as const;
 
 const ThreadSuggestions: FC = () => {
+  // Only show suggestions if mode is selected
+  const [selectedMode, setSelectedMode] = useState<Mode>(() => {
+    if (typeof window !== "undefined") {
+      return (sessionStorage.getItem("assistant_mode") as Mode) || null;
+    }
+    return null;
+  });
+
+  useEffect(() => {
+    const handleModeChange = () => {
+      if (typeof window !== "undefined") {
+        const mode = sessionStorage.getItem("assistant_mode") as Mode;
+        setSelectedMode(mode);
+      }
+    };
+    
+    // Listen for mode changes via custom event
+    window.addEventListener("assistant-mode-changed", handleModeChange);
+    return () => window.removeEventListener("assistant-mode-changed", handleModeChange);
+  }, []);
+
+  if (!selectedMode) {
+    return null;
+  }
+
   return (
-    <div className="aui-thread-welcome-suggestions grid w-full @md:grid-cols-2 gap-2 pb-4">
+    <div className="aui-thread-welcome-suggestions grid w-full grid-cols-1 sm:grid-cols-2 gap-2 pb-2 sm:pb-4">
       {SUGGESTIONS.map((suggestion, index) => (
         <div
           key={suggestion.prompt}
@@ -142,18 +177,104 @@ const ThreadSuggestions: FC = () => {
 };
 
 const Composer: FC = () => {
+  const [selectedMode, setSelectedMode] = useState<Mode>(() => {
+    // Default to null (no mode selected) - Brew Mode
+    return null;
+  });
+
+  useEffect(() => {
+    // Store mode in sessionStorage
+    if (selectedMode) {
+      sessionStorage.setItem("assistant_mode", selectedMode);
+    } else {
+      sessionStorage.removeItem("assistant_mode");
+    }
+    // Dispatch event for other components
+    window.dispatchEvent(new Event("assistant-mode-changed"));
+  }, [selectedMode]);
+
+  const modes = [
+    {
+      id: "search" as const,
+      label: "Search",
+      description: "Fast answers to everyday questions",
+      icon: Globe,
+    },
+    {
+      id: "research" as const,
+      label: "Research",
+      description: "Deep research on any topic",
+      icon: Telescope,
+    },
+  ];
+
+  const currentMode = modes.find(m => m.id === selectedMode);
+  // Default to Brew Mode icon (coffee cup or similar) when no mode selected
+  const ModeIcon = currentMode?.icon || SparklesIcon;
+  const placeholder = selectedMode 
+    ? `${currentMode?.label} anything...` 
+    : "Brew anything...";
+
   return (
     <ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
-      <ComposerPrimitive.AttachmentDropzone className="aui-composer-attachment-dropzone flex w-full flex-col rounded-2xl border border-input bg-background px-1 pt-2 outline-none transition-shadow has-[textarea:focus-visible]:border-ring has-[textarea:focus-visible]:ring-2 has-[textarea:focus-visible]:ring-ring/20 data-[dragging=true]:border-ring data-[dragging=true]:border-dashed data-[dragging=true]:bg-accent/50">
+      <ComposerPrimitive.AttachmentDropzone className="aui-composer-attachment-dropzone flex w-full flex-col rounded-xl sm:rounded-2xl border border-border bg-card dark:bg-card/50 shadow-sm dark:shadow-md px-0 pt-2 sm:pt-3 pb-2 sm:pb-3 outline-none transition-shadow has-[textarea:focus-visible]:border-ring has-[textarea:focus-visible]:ring-2 has-[textarea:focus-visible]:ring-ring/20 data-[dragging=true]:border-ring data-[dragging=true]:border-dashed data-[dragging=true]:bg-accent/50">
         <ComposerAttachments />
-        <ComposerPrimitive.Input
-          placeholder="Send a message..."
-          className="aui-composer-input mb-1 max-h-32 min-h-14 w-full resize-none bg-transparent px-4 pt-2 pb-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-0"
-          rows={1}
-          autoFocus
-          aria-label="Message input"
-        />
-        <ComposerAction />
+        <div className="px-2 sm:px-3.5 grid grid-cols-[auto_1fr_auto] items-center gap-x-1.5 sm:gap-x-2 gap-y-2">
+          <div className="row-start-2 flex items-center">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className={cn(
+                    "reset interactable select-none outline-none font-semibold duration-300 ease-out font-sans text-center items-center justify-center leading-loose whitespace-nowrap data-[state=open]:text-foreground data-[state=open]:bg-subtle text-muted-foreground h-8 text-sm cursor-pointer origin-center active:scale-[0.97] active:duration-150 active:ease-outExpo inline-flex hover:text-foreground hover:bg-subtle rounded-lg px-2 gap-1.5"
+                  )}
+                >
+                  <ModeIcon className="size-4" />
+                  <span className="font-medium hidden sm:inline">{currentMode?.label || "Brew"}</span>
+                  <ChevronDownIcon className="size-3.5 opacity-70" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" side="top" className="w-48">
+                <DropdownMenuItem
+                  onClick={() => setSelectedMode(null)}
+                  className="flex items-center gap-2 cursor-pointer"
+                >
+                  <SparklesIcon className="size-4 text-foreground" />
+                  <div className="flex flex-col">
+                    <span className="font-medium text-foreground">Brew</span>
+                    <span className="text-xs text-muted-foreground">Default mode</span>
+                  </div>
+                </DropdownMenuItem>
+                {modes.map((mode) => {
+                  const Icon = mode.icon;
+                  return (
+                    <DropdownMenuItem
+                      key={mode.id}
+                      onClick={() => setSelectedMode(mode.id)}
+                      className="flex items-center gap-2 cursor-pointer"
+                    >
+                      <Icon className="size-4 text-foreground" />
+                      <div className="flex flex-col">
+                        <span className="font-medium text-foreground">{mode.label}</span>
+                        <span className="text-xs text-muted-foreground">{mode.description}</span>
+                      </div>
+                    </DropdownMenuItem>
+                  );
+                })}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+          <ComposerPrimitive.Input
+            placeholder={placeholder}
+            className="aui-composer-input col-span-3 row-start-1 mb-1 max-h-32 min-h-12 sm:min-h-14 w-full resize-none bg-transparent px-3 sm:px-4 pt-2 pb-3 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-0"
+            rows={1}
+            autoFocus
+            aria-label="Message input"
+          />
+          <div className="col-start-3 row-start-2 flex items-center justify-end">
+            <ComposerAction />
+          </div>
+        </div>
       </ComposerPrimitive.AttachmentDropzone>
     </ComposerPrimitive.Root>
   );
@@ -161,9 +282,7 @@ const Composer: FC = () => {
 
 const ComposerAction: FC = () => {
   return (
-    <div className="aui-composer-action-wrapper relative mx-2 mb-2 flex items-center justify-between">
-      <ComposerAddAttachment />
-
+    <div className="aui-composer-action-wrapper relative flex items-center">
       <AssistantIf condition={({ thread }) => !thread.isRunning}>
         <ComposerPrimitive.Send asChild>
           <TooltipIconButton
@@ -172,7 +291,7 @@ const ComposerAction: FC = () => {
             type="submit"
             variant="default"
             size="icon"
-            className="aui-composer-send size-8 rounded-full"
+            className="aui-composer-send size-8 rounded-lg"
             aria-label="Send message"
           >
             <ArrowUpIcon className="aui-composer-send-icon size-4" />
@@ -186,7 +305,7 @@ const ComposerAction: FC = () => {
             type="button"
             variant="default"
             size="icon"
-            className="aui-composer-cancel size-8 rounded-full"
+            className="aui-composer-cancel size-8 rounded-lg"
             aria-label="Stop generating"
           >
             <SquareIcon className="aui-composer-cancel-icon size-3 fill-current" />
@@ -210,7 +329,7 @@ const MessageError: FC = () => {
 const AssistantMessage: FC = () => {
   return (
     <MessagePrimitive.Root
-      className="aui-assistant-message-root fade-in slide-in-from-bottom-1 relative mx-auto w-full max-w-(--thread-max-width) animate-in py-4 duration-150 flex gap-4"
+      className="aui-assistant-message-root fade-in slide-in-from-bottom-1 relative mx-auto w-full max-w-(--thread-max-width) animate-in py-3 sm:py-4 duration-150 flex gap-2 sm:gap-4"
       data-role="assistant"
     >
       <div className="flex-shrink-0 size-8 rounded-full bg-primary/10 flex items-center justify-center text-primary mt-1">
@@ -271,7 +390,7 @@ const AssistantActionBar: FC = () => {
 const UserMessage: FC = () => {
   return (
     <MessagePrimitive.Root
-      className="aui-user-message-root fade-in slide-in-from-bottom-1 mx-auto grid w-full max-w-(--thread-max-width) animate-in auto-rows-auto grid-cols-[minmax(72px,1fr)_auto] content-start gap-y-2 px-2 py-4 duration-150 [&:where(>*)]:col-start-2 flex gap-4"
+      className="aui-user-message-root fade-in slide-in-from-bottom-1 mx-auto grid w-full max-w-(--thread-max-width) animate-in auto-rows-auto grid-cols-[minmax(72px,1fr)_auto] content-start gap-y-2 px-2 sm:px-4 py-3 sm:py-4 duration-150 [&:where(>*)]:col-start-2 flex gap-2 sm:gap-4"
       data-role="user"
     >
       <div className="flex-shrink-0 size-8 rounded-full bg-muted flex items-center justify-center text-muted-foreground mt-1 order-last">
@@ -281,7 +400,7 @@ const UserMessage: FC = () => {
         <UserMessageAttachments />
 
         <div className="aui-user-message-content-wrapper relative col-start-2 min-w-0 flex flex-col items-end">
-          <div className="aui-user-message-content wrap-break-word rounded-2xl bg-muted px-4 py-2.5 text-foreground">
+          <div className="aui-user-message-content wrap-break-word rounded-xl sm:rounded-2xl bg-muted px-3 sm:px-4 py-2 sm:py-2.5 text-foreground text-sm sm:text-base">
             <MessagePrimitive.Parts />
           </div>
           <div className="aui-user-action-bar-wrapper absolute top-1/2 left-0 -translate-x-full -translate-y-1/2 pr-2">
