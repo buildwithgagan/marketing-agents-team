@@ -71,7 +71,22 @@ export const CustomThreadList: FC<{ isOpen?: boolean }> = ({ isOpen = true }) =>
     );
   };
 
+  const hasMessages = (threadId: string): boolean => {
+    try {
+      const messages = localStorage.getItem(`assistant_messages_${threadId}`);
+      if (!messages) return false;
+      const parsed = JSON.parse(messages);
+      return Array.isArray(parsed) && parsed.length > 0;
+    } catch {
+      return false;
+    }
+  };
+
   const handleNew = () => {
+    // Only allow creating new thread if current thread has messages
+    if (activeThreadId && !hasMessages(activeThreadId)) {
+      return; // Don't create new thread if current one is empty
+    }
     const newId = `thread_${Date.now()}`;
     handleSelect(newId);
   };
@@ -161,21 +176,24 @@ export const CustomThreadList: FC<{ isOpen?: boolean }> = ({ isOpen = true }) =>
 
   return (
     <>
-      <div className="flex flex-col gap-2 p-2">
+      <div className={cn("flex flex-col gap-2", isOpen ? "p-2" : "p-2 items-center")}>
         <Button
           variant="outline"
+          size={isOpen ? "default" : "icon"}
           className={cn(
-            "justify-start gap-2 rounded-lg text-sm transition-all",
-             isOpen ? "px-3 w-full" : "px-0 w-8 justify-center"
+            "rounded-lg text-sm transition-all",
+             isOpen ? "justify-start gap-2 px-3 w-full h-9" : "w-8 h-8",
+             activeThreadId && !hasMessages(activeThreadId) && "opacity-50 cursor-not-allowed"
           )}
           onClick={handleNew}
-          title="New Thread"
+          disabled={activeThreadId && !hasMessages(activeThreadId)}
+          title={activeThreadId && !hasMessages(activeThreadId) ? "Start a conversation first" : "New Thread"}
         >
           <PlusIcon className="size-4" />
           {isOpen && "New Thread"}
         </Button>
 
-        <div className="flex flex-col gap-1 mt-2">
+        <div className={cn("flex flex-col gap-1", isOpen ? "mt-2" : "mt-2 items-center")}>
           {threads.length === 0 && isOpen && (
              <div className="text-xs text-muted-foreground px-3 py-2">No history</div>
           )}
@@ -188,9 +206,9 @@ export const CustomThreadList: FC<{ isOpen?: boolean }> = ({ isOpen = true }) =>
               key={thread.id}
               onClick={() => handleSelect(thread.id)}
               className={cn(
-                 "group flex items-center justify-between rounded-lg px-2 py-2 text-sm font-medium transition-colors cursor-pointer h-9",
+                 "group flex items-center justify-between rounded-lg text-sm font-medium transition-colors cursor-pointer",
                  isActive ? "bg-accent text-accent-foreground" : "hover:bg-muted",
-                 !isOpen && "justify-center px-0"
+                 isOpen ? "px-2 py-2 h-9" : "px-0 py-2 h-9 w-8 justify-center"
               )}
               title={thread.title || "New Chat"}
             >

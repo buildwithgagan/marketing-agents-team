@@ -5,9 +5,10 @@ import { CustomThreadList } from "@/components/thread-list";
 import { MyAssistantRuntimeProvider } from "@/components/MyAssistantRuntime";
 import { cn } from "@/lib/utils";
 import { useState, useEffect, useCallback, useRef } from "react";
-import { PanelLeftOpen, Moon, Sun, Plus, MessageSquare, ChevronDown, Check } from "lucide-react";
+import { PanelLeftOpen, Moon, Sun, MessageSquare, ChevronDown, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTheme } from "next-themes";
+import { MarketingLogo } from "@/components/marketing-logo";
 
 const MODEL_OPTIONS = [
   {
@@ -32,11 +33,11 @@ const MODEL_OPTIONS = [
 
 export default function Home() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const { theme, setTheme } = useTheme();
+  const { theme, setTheme, resolvedTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
   const [threads, setThreads] = useState<any[]>([]);
   const [currentThreadId, setCurrentThreadId] = useState<string>("default-thread");
-  const [selectedModel, setSelectedModel] = useState("gpt-4.1");
+  const [selectedModel, setSelectedModel] = useState("gpt-4.1-mini");
   const [thinkingEnabled, setThinkingEnabled] = useState(false);
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -78,7 +79,22 @@ export default function Home() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  const hasMessages = (threadId: string): boolean => {
+    try {
+      const messages = localStorage.getItem(`assistant_messages_${threadId}`);
+      if (!messages) return false;
+      const parsed = JSON.parse(messages);
+      return Array.isArray(parsed) && parsed.length > 0;
+    } catch {
+      return false;
+    }
+  };
+
   const handleNewThread = () => {
+    // Only allow creating new thread if current thread has messages
+    if (currentThreadId && !hasMessages(currentThreadId)) {
+      return; // Don't create new thread if current one is empty
+    }
     const newId = Math.random().toString(36).substring(7);
     localStorage.setItem("assistant_current_thread_id", newId);
     setCurrentThreadId(newId);
@@ -117,11 +133,17 @@ export default function Home() {
             sidebarOpen ? "w-64" : "w-16"
           )}
         >
-          <div className={cn("p-4 flex items-center border-b flex-shrink-0 h-14", sidebarOpen ? "justify-between" : "justify-center")}>
-            {sidebarOpen && <h1 className="font-bold text-sm tracking-tight text-primary">DeepAgent</h1>}
-            <Button variant="ghost" size="icon" onClick={handleNewThread} className="h-8 w-8 hover:bg-background/80">
-               <Plus className="h-4 w-4" />
-            </Button>
+          <div className={cn("flex items-center border-b flex-shrink-0 h-14", sidebarOpen ? "p-4" : "p-2 justify-center")}>
+            {sidebarOpen ? (
+              <div className="flex items-center gap-2">
+                <MarketingLogo size="sm" />
+                <h1 className="font-bold text-sm tracking-tight text-primary">BrewX</h1>
+              </div>
+            ) : (
+              <div className="flex items-center justify-center w-full">
+                <MarketingLogo size="md" />
+              </div>
+            )}
           </div>
           <div className="flex-1 overflow-y-auto w-full">
             <CustomThreadList isOpen={sidebarOpen} />
@@ -200,20 +222,31 @@ export default function Home() {
                 variant="ghost"
                 size="icon"
                 onClick={() => {
+                  const newTheme = resolvedTheme === "dark" ? "light" : "dark";
                   if (!(document as any).startViewTransition) {
-                    setTheme(theme === "dark" ? "light" : "dark");
+                    setTheme(newTheme);
                     return;
                   }
                   (document as any).startViewTransition(() => {
-                    setTheme(theme === "dark" ? "light" : "dark");
+                    setTheme(newTheme);
                   });
                 }}
-                className="h-8 w-8 text-muted-foreground hover:text-foreground relative overflow-hidden"
+                className="h-8 w-8 text-muted-foreground hover:text-foreground relative overflow-hidden z-20"
               >
                 {mounted && (
                   <>
-                    <Sun className="h-4 w-4 absolute transition-all scale-100 rotate-0 dark:scale-0 dark:rotate-90" />
-                    <Moon className="h-4 w-4 absolute transition-all scale-0 rotate-90 dark:scale-100 dark:rotate-0" />
+                    <Sun 
+                      className={cn(
+                        "h-4 w-4 absolute transition-all duration-200",
+                        resolvedTheme === "dark" ? "scale-100 rotate-0 opacity-100" : "scale-0 rotate-90 opacity-0"
+                      )} 
+                    />
+                    <Moon 
+                      className={cn(
+                        "h-4 w-4 absolute transition-all duration-200",
+                        resolvedTheme === "dark" ? "scale-0 rotate-90 opacity-0" : "scale-100 rotate-0 opacity-100"
+                      )} 
+                    />
                   </>
                 )}
               </Button>

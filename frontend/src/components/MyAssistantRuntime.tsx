@@ -5,7 +5,7 @@ import { useMemo, useEffect, useState } from "react";
 
 export function MyAssistantRuntimeProvider({ 
   children,
-  model = "gpt-4.1",
+  model = "gpt-4.1-mini",
   thinking = false,
   threadId
 }: { 
