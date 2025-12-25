@@ -5,8 +5,14 @@ from .agent import agent_manager
 import json
 import asyncio
 from contextlib import asynccontextmanager
-
+import os
+from dotenv import load_dotenv
 import logging
+
+# Load env variables
+load_dotenv()
+
+PORT = int(os.getenv("PORT", 8000))
 
 # Configure logging
 logging.basicConfig(
@@ -253,3 +259,7 @@ async def chat_endpoint(request: Request):
             yield json.dumps({"type": "error", "content": str(e)}) + "\n"
 
     return StreamingResponse(event_generator(), media_type="application/x-ndjson")
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="localhost", port=PORT, reload=True)
