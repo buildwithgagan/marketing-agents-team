@@ -15,4 +15,6 @@ dependencies = [
     "uvicorn>=0.40.0",
     "langgraph-checkpoint-sqlite>=3.0.1",
     "aiosqlite>=0.22.0",
+    "pytrends>=4.9.2",
+    "requests>=2.32.5",
 ]

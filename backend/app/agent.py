@@ -13,6 +13,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.runnables import ConfigurableField
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.tools import load_mcp_tools
+from .tools.marketing import get_autocomplete_suggestions, get_google_trends
 from langgraph.checkpoint.memory import MemorySaver
 
 # Load env variables
@@ -76,10 +77,13 @@ class AgentManager:
         self.session = await self.session_context.__aenter__()
 
         print("Session established. Loading tools...")
-        self.tools = await load_mcp_tools(self.session)
+        print("Session established. Loading tools...")
+        mcp_tools = await load_mcp_tools(self.session)
         print(
-            f"Loaded {len(self.tools)} tools from Tavily: {[t.name for t in self.tools]}"
+            f"Loaded {len(mcp_tools)} tools from Tavily: {[t.name for t in mcp_tools]}"
         )
+        # Combine MCP tools with local tools
+        self.tools = mcp_tools + [get_autocomplete_suggestions, get_google_trends]
 
     def _configure_model(self):
         """Configure the base model with dynamic overrides."""

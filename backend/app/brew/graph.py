@@ -17,6 +17,9 @@ from .workers import (
     create_general_worker_agent,
     create_research_worker_agent,
     create_social_worker_agent,
+    create_report_worker_agent,
+    create_reviewer_agent,
+    create_strategist_agent,
 )
 
 
@@ -38,6 +41,9 @@ def create_brew_graph(
     content_agent = create_content_worker_agent(model, tools)
     analytics_agent = create_analytics_worker_agent(model, tools)
     social_agent = create_social_worker_agent(model, tools)
+    report_agent = create_report_worker_agent(model)
+    reviewer_agent = create_reviewer_agent(model)
+    strategist_agent = create_strategist_agent(model)
     general_agent = create_general_worker_agent(model)
 
     # --- Nodes ---
@@ -168,9 +174,17 @@ def create_brew_graph(
             "assignment": assignment,
         }
 
-    async def _run_worker(agent, state: WorkerState, worker_name: str) -> dict:
+    async def _run_worker(
+        agent,
+        state: WorkerState,
+        worker_name: str,
+        override_task: str = None,
+        increment_index: bool = True,
+    ) -> dict:
         assignment = state.get("assignment")
-        if not assignment:
+        task_text = override_task if override_task else (assignment.task if assignment else "")
+
+        if not task_text:
             return {
                 "worker_reports": [
                     WorkerReport(
@@ -180,13 +194,13 @@ def create_brew_graph(
                         result="Missing assignment.",
                     )
                 ],
-                "next_task_index": state.get("next_task_index", 0) + 1,
+                "next_task_index": state.get("next_task_index", 0) + (1 if increment_index else 0),
             }
 
         try:
             # Run deep agent; it can use tools internally.
             result = await agent.ainvoke(
-                {"messages": [{"role": "user", "content": assignment.task}]}
+                {"messages": [{"role": "user", "content": task_text}]}
             )
             # deepagents returns a LangGraph-like state; try common shapes
             text = ""
@@ -208,7 +222,7 @@ def create_brew_graph(
                         result=text,
                     )
                 ],
-                "next_task_index": state.get("next_task_index", 0) + 1,
+                "next_task_index": state.get("next_task_index", 0) + (1 if increment_index else 0),
             }
         except Exception as e:
             return {
@@ -220,11 +234,51 @@ def create_brew_graph(
                         result=f"Worker failed: {e}",
                     )
                 ],
-                "next_task_index": state.get("next_task_index", 0) + 1,
+                "next_task_index": state.get("next_task_index", 0) + (1 if increment_index else 0),
             }
 
     async def research_worker(state: WorkerState) -> dict:
-        return await _run_worker(research_agent, state, "research")
+        # 1. Prepare Delta Prompt
+        input_msg = state.get("assignment").task
+        feedback = state.get("critique_feedback", "")
+        existing_data = state.get("research_data", "")
+
+        if feedback:
+            # Round 2+: Incremental Research
+            input_msg = (
+                f"Original Task: {input_msg}\n\n"
+                f"EXISTING FINDINGS:\n{existing_data}\n\n"
+                f"CRITIQUE (MISSING INFO): {feedback}\n\n"
+                f"INSTRUCTION: Search ONLY for the missing items. Append them."
+            )
+            
+        # 2. Run Worker (no index increment)
+        res = await _run_worker(
+            research_agent, state, "research", override_task=input_msg, increment_index=False
+        )
+        
+        # 3. Accumulate Data (Append, don't overwrite)
+        new_text = res.get("worker_reports")[0].result
+        combined_text = existing_data + "\n\n" + new_text if existing_data else new_text
+        
+        current_iter = state.get("iteration_count", 0)
+        return {**res, "research_data": combined_text, "iteration_count": current_iter + 1}
+
+    async def reviewer_worker(state: WorkerState) -> dict:
+        # Reviewer analyzes the research data
+        # No index increment
+        research_text = state.get("research_data", "")
+        res = await _run_worker(
+            reviewer_agent, state, "reviewer", increment_index=False
+        )
+        # Extract critique result
+        critique = res.get("worker_reports")[0].result
+        return {**res, "critique_feedback": critique}
+
+    async def strategist_worker(state: WorkerState) -> dict:
+        # Strategist IS the node that completes the task logic.
+        # So we increment index here.
+        return await _run_worker(strategist_agent, state, "strategist", increment_index=True)
 
     async def content_worker(state: WorkerState) -> dict:
         return await _run_worker(content_agent, state, "content")
@@ -234,6 +288,9 @@ def create_brew_graph(
 
     async def social_worker(state: WorkerState) -> dict:
         return await _run_worker(social_agent, state, "social")
+
+    async def report_worker(state: WorkerState) -> dict:
+        return await _run_worker(report_agent, state, "report")
 
     async def general_worker(state: WorkerState) -> dict:
         return await _run_worker(general_agent, state, "general")
@@ -276,9 +333,12 @@ def create_brew_graph(
     builder.add_node("planner", planner)
     builder.add_node("task_router", task_router)
     builder.add_node("research_worker", research_worker)
+    builder.add_node("reviewer_worker", reviewer_worker)
+    builder.add_node("strategist_worker", strategist_worker)
     builder.add_node("content_worker", content_worker)
     builder.add_node("analytics_worker", analytics_worker)
     builder.add_node("social_worker", social_worker)
+    builder.add_node("report_worker", report_worker)
     builder.add_node("general_worker", general_worker)
     builder.add_node("synthesizer", synthesizer)
 
@@ -289,19 +349,49 @@ def create_brew_graph(
         lambda state: state.get("route", "synthesizer"),
         {
             "research_worker": "research_worker",
+            "reviewer_worker": "reviewer_worker",
+            "strategist_worker": "strategist_worker",
             "content_worker": "content_worker",
             "analytics_worker": "analytics_worker",
+            "analytics_worker": "analytics_worker",
             "social_worker": "social_worker",
+            "report_worker": "report_worker",
             "general_worker": "general_worker",
             "synthesizer": "synthesizer",
         },
     )
 
-    # Sequential loop: each worker routes back to task_router for the next task
-    builder.add_edge("research_worker", "task_router")
+    # Debate Loop Logic
+    def should_continue_debate(state: BrewState):
+        feedback = state.get("critique_feedback", "")
+        iterations = state.get("iteration_count", 0)
+        
+        if "REJECT" in feedback and iterations < 3:
+            return "research_worker"
+        return "strategist_worker"
+
+    # Research -> Reviewer -> (Loop) or Strategist
+    builder.add_edge("research_worker", "reviewer_worker")
+    builder.add_conditional_edges(
+        "reviewer_worker",
+        should_continue_debate,
+        {
+            "research_worker": "research_worker",
+            "strategist_worker": "strategist_worker"
+        }
+    )
+    # Strategist -> Report -> End (or Router if needed, for simplicity we go to Router/End)
+    # Actually current flow goes back to Task Router.
+    # We want Research task to stay in "Research Phase" until Strategist is done.
+    # So we bypass task_router for the internal loop.
+    builder.add_edge("strategist_worker", "task_router")
+
+    # builder.add_edge("research_worker", "task_router") # REMOVED: Managed by loop now
     builder.add_edge("content_worker", "task_router")
     builder.add_edge("analytics_worker", "task_router")
+    builder.add_edge("analytics_worker", "task_router")
     builder.add_edge("social_worker", "task_router")
+    builder.add_edge("report_worker", "task_router")
     builder.add_edge("general_worker", "task_router")
     builder.add_edge("synthesizer", END)
 

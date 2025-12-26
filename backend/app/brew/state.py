@@ -6,7 +6,7 @@ from typing import Annotated, Literal, TypedDict
 from pydantic import BaseModel, Field
 
 
-WorkerName = Literal["research", "content", "analytics", "social", "general"]
+WorkerName = Literal["research", "content", "analytics", "social", "general", "report", "reviewer", "strategist"]
 
 
 class TaskAssignment(BaseModel):
@@ -42,6 +42,11 @@ class BrewState(TypedDict, total=False):
     worker_reports: Annotated[list[WorkerReport], operator.add]
     next_task_index: int
 
+    # Debate / Research Loop State
+    research_data: str  # Raw research findings
+    critique_feedback: str  # Feedback from Reviewer
+    iteration_count: int  # Safety limit for loops
+
     # Output
     final_response: str
     status: str
@@ -51,3 +56,8 @@ class WorkerState(TypedDict, total=False):
     assignment: TaskAssignment
     worker_reports: Annotated[list[WorkerReport], operator.add]
     next_task_index: int
+    
+    # Pass through for sub-loops
+    research_data: str
+    critique_feedback: str
+    iteration_count: int
