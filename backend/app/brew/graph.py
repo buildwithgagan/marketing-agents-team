@@ -26,10 +26,10 @@ def create_brew_graph(
     checkpointer: MemorySaver | None = None,
 ):
     """
-    Brew mode: tool-less master supervisor + parallel Deep Agents workers.
+    Brew mode: tool-less master supervisor + sequential Deep Agents workers.
 
     - planner: tool-less master, structured plan
-    - workers: deepagents workers with tools (Tavily MCP)
+    - workers: deepagents workers with tools (Tavily MCP), executed sequentially by priority
     - synthesizer: tool-less master, streams final response
     """
 
@@ -138,21 +138,35 @@ def create_brew_graph(
                 HumanMessage(content=f"Create a concise task plan for: {user_text}"),
             ]
         )
+        # Sort tasks by priority (1 highest) to ensure deterministic sequential execution
+        if getattr(plan, "tasks", None):
+            sorted_tasks = sorted(
+                plan.tasks, key=lambda t: getattr(t, "priority", 2) or 2
+            )
+            plan = TaskPlan(reasoning=plan.reasoning, tasks=sorted_tasks)
         return {
             "task_plan": plan,
             "status": f"Planning complete: {len(plan.tasks)} tasks assigned",
+            "next_task_index": 0,
         }
 
-    def dispatch_workers(state: BrewState) -> List[Send]:
+    def task_router(state: BrewState) -> dict:
+        """Route to the next worker sequentially based on task priority order."""
         plan = state.get("task_plan")
+        idx = state.get("next_task_index", 0)
         if not plan or not getattr(plan, "tasks", None):
-            return [Send("synthesizer", state)]
+            return {"route": "synthesizer"}
 
-        sends: List[Send] = []
-        for assignment in plan.tasks:
-            node = f"{assignment.worker}_worker"
-            sends.append(Send(node, {"assignment": assignment}))
-        return sends
+        tasks = plan.tasks
+        # Clamp index in case of drift
+        if idx >= len(tasks):
+            return {"route": "synthesizer"}
+
+        assignment = tasks[idx]
+        return {
+            "route": f"{assignment.worker}_worker",
+            "assignment": assignment,
+        }
 
     async def _run_worker(agent, state: WorkerState, worker_name: str) -> dict:
         assignment = state.get("assignment")
@@ -165,7 +179,8 @@ def create_brew_graph(
                         status="failed",
                         result="Missing assignment.",
                     )
-                ]
+                ],
+                "next_task_index": state.get("next_task_index", 0) + 1,
             }
 
         try:
@@ -192,7 +207,8 @@ def create_brew_graph(
                         status="success",
                         result=text,
                     )
-                ]
+                ],
+                "next_task_index": state.get("next_task_index", 0) + 1,
             }
         except Exception as e:
             return {
@@ -203,7 +219,8 @@ def create_brew_graph(
                         status="failed",
                         result=f"Worker failed: {e}",
                     )
-                ]
+                ],
+                "next_task_index": state.get("next_task_index", 0) + 1,
             }
 
     async def research_worker(state: WorkerState) -> dict:
@@ -257,6 +274,7 @@ def create_brew_graph(
     # --- Build graph ---
     builder = StateGraph(BrewState)
     builder.add_node("planner", planner)
+    builder.add_node("task_router", task_router)
     builder.add_node("research_worker", research_worker)
     builder.add_node("content_worker", content_worker)
     builder.add_node("analytics_worker", analytics_worker)
@@ -265,25 +283,26 @@ def create_brew_graph(
     builder.add_node("synthesizer", synthesizer)
 
     builder.add_edge(START, "planner")
+    builder.add_edge("planner", "task_router")
     builder.add_conditional_edges(
-        "planner",
-        dispatch_workers,
-        [
-            "research_worker",
-            "content_worker",
-            "analytics_worker",
-            "social_worker",
-            "general_worker",
-            "synthesizer",
-        ],
+        "task_router",
+        lambda state: state.get("route", "synthesizer"),
+        {
+            "research_worker": "research_worker",
+            "content_worker": "content_worker",
+            "analytics_worker": "analytics_worker",
+            "social_worker": "social_worker",
+            "general_worker": "general_worker",
+            "synthesizer": "synthesizer",
+        },
     )
 
-    # Workers write to shared state key worker_reports (reducer) and converge to synthesizer
-    builder.add_edge("research_worker", "synthesizer")
-    builder.add_edge("content_worker", "synthesizer")
-    builder.add_edge("analytics_worker", "synthesizer")
-    builder.add_edge("social_worker", "synthesizer")
-    builder.add_edge("general_worker", "synthesizer")
+    # Sequential loop: each worker routes back to task_router for the next task
+    builder.add_edge("research_worker", "task_router")
+    builder.add_edge("content_worker", "task_router")
+    builder.add_edge("analytics_worker", "task_router")
+    builder.add_edge("social_worker", "task_router")
+    builder.add_edge("general_worker", "task_router")
     builder.add_edge("synthesizer", END)
 
     return (

@@ -40,6 +40,7 @@ class BrewState(TypedDict, total=False):
     # Planning / execution
     task_plan: TaskPlan
     worker_reports: Annotated[list[WorkerReport], operator.add]
+    next_task_index: int
 
     # Output
     final_response: str
@@ -49,3 +50,4 @@ class BrewState(TypedDict, total=False):
 class WorkerState(TypedDict, total=False):
     assignment: TaskAssignment
     worker_reports: Annotated[list[WorkerReport], operator.add]
+    next_task_index: int

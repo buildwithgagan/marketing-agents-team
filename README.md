@@ -5,7 +5,7 @@ A sophisticated multi-agent AI system designed for comprehensive marketing resea
 ## ✨ Key Features
 
 -   **Multi-Mode Architecture**: Three specialized modes - **Brew** (default), **Search**, and **Research** - each optimized for different complexity levels
--   **Brew Mode - Multi-Agent Orchestration**: Master orchestrator with specialized workers (Research, Content, Analytics, Social, General) working in parallel
+-   **Brew Mode - Multi-Agent Orchestration**: Master orchestrator with specialized workers (Research, Content, Analytics, Social, General) working sequentially based on task priority
 -   **Advanced Model Support**: Optimized for GPT-4.1, GPT-5 series (with reasoning/thinking modes), and OpenAI o1/o3 series
 -   **Thinking/Reasoning Toggle**: Dynamic control over model reasoning effort (high/low) for rapid answers or deep analysis
 -   **Real-time Streaming**: Rich UI experience with streaming thoughts, status updates, tool calls, worker progress, and task plans
@@ -23,7 +23,7 @@ The system consists of three operational modes, each with distinct architectures
 
 #### **Brew Mode** (Default) - Multi-Agent Orchestration
 - **Planner**: Tool-less master orchestrator that analyzes queries and creates structured task plans
-- **Workers**: Specialized deep agent workers that execute tasks in parallel:
+- **Workers**: Specialized deep agent workers that execute tasks sequentially based on priority:
   - **Research Worker**: Web research, fact-finding, summaries (has Tavily tools)
   - **Content Worker**: Writing, copy, posts, messaging (has Tavily tools)
   - **Analytics Worker**: Metrics, KPIs, analysis, experiments (has Tavily tools)
@@ -158,7 +158,7 @@ sequenceDiagram
     Planner->>API: Stream plan (plan_delta events)
     API->>User: Display plan
     
-    Planner->>Workers: Dispatch tasks (parallel)
+    Planner->>Workers: Dispatch tasks (sequential by priority)
     Workers->>Tavily: Tool calls (if needed)
     Tavily-->>Workers: Results
     Workers->>Workers: Process & generate reports
@@ -229,7 +229,7 @@ The system supports three modes (Brew is the default):
 
 1. **Brew Mode** (default): Multi-agent orchestration for complex marketing tasks
    - Best for: Content strategy, research, analytics, social media planning
-   - Features: Parallel worker execution, task planning, synthesis
+   - Features: Sequential worker execution by priority, task planning, synthesis
 
 2. **Search Mode**: Fast single-agent search
    - Best for: Quick answers, simple queries
@@ -243,7 +243,7 @@ The system supports three modes (Brew is the default):
 
 1. **Enter a Query**: Ask a complex marketing question (e.g., "Create a social media strategy for Q1 2025")
 2. **Watch the Plan**: The planner generates a task plan visible in the UI (plan_delta events)
-3. **Monitor Workers**: Track worker progress as they execute tasks in parallel (worker_start/worker_complete events)
+3. **Monitor Workers**: Track worker progress as they execute tasks sequentially by priority (worker_start/worker_complete events)
 4. **Final Synthesis**: Receive a unified, professional response combining all worker outputs
 
 ### Model Selection
@@ -362,7 +362,7 @@ The `AgentManager` class initializes and manages all three modes:
 ## 📝 Notes
 
 - Brew mode is the default when no mode is specified
-- Workers execute in parallel using LangGraph's `Send` primitive
+- Workers execute sequentially based on task priority (deterministic execution order)
 - The synthesizer only streams tokens (not worker outputs)
 - Thread persistence uses in-memory checkpointer (can be upgraded to SQLite/PostgreSQL)
 - Tavily MCP requires `npx mcp-remote` bridge for connection
