@@ -1,45 +1,49 @@
 "use client";
 
-import { AssistantRuntimeProvider, useLocalRuntime, type ChatModelAdapter } from "@assistant-ui/react";
+import {
+  AssistantRuntimeProvider,
+  useLocalRuntime,
+  type ChatModelAdapter,
+} from "@assistant-ui/react";
 import { useMemo, useEffect, useState } from "react";
 
-export function MyAssistantRuntimeProvider({ 
+export function MyAssistantRuntimeProvider({
   children,
   model = "gpt-4.1-mini",
   thinking = false,
-  threadId
-}: { 
+  threadId,
+}: {
   children: React.ReactNode;
   model?: string;
   thinking?: boolean;
   threadId?: string;
 }) {
   const [storedMessages, setStoredMessages] = useState<any[] | null>(null);
-  
+
   // Load messages on mount (or when threadId changes via key)
   useEffect(() => {
     const tid = threadId || "default-thread";
     const saved = localStorage.getItem(`assistant_messages_${tid}`);
     if (saved) {
-       try {
-         setStoredMessages(JSON.parse(saved));
-       } catch (e) { 
-         console.error(e); 
-         setStoredMessages([]); 
-       }
+      try {
+        setStoredMessages(JSON.parse(saved));
+      } catch (e) {
+        console.error(e);
+        setStoredMessages([]);
+      }
     } else {
-       setStoredMessages([]);
+      setStoredMessages([]);
     }
   }, [threadId]);
 
   if (storedMessages === null) {
-      return null; 
+    return null;
   }
 
   return (
-    <InnerRuntimeProvider 
-      model={model} 
-      thinking={thinking} 
+    <InnerRuntimeProvider
+      model={model}
+      thinking={thinking}
       threadId={threadId || "default-thread"}
       initialMessages={storedMessages}
     >
@@ -53,7 +57,7 @@ function InnerRuntimeProvider({
   model,
   thinking,
   threadId,
-  initialMessages
+  initialMessages,
 }: {
   children: React.ReactNode;
   model: string;
@@ -61,225 +65,384 @@ function InnerRuntimeProvider({
   threadId: string;
   initialMessages: any[];
 }) {
-  const MyModelAdapter: ChatModelAdapter = useMemo(() => ({
-    async *run({ messages, abortSignal }) {
-      try {
-        // Get mode from sessionStorage
-        const mode = sessionStorage.getItem("assistant_mode") || null;
-        
-        const response = await fetch("http://localhost:8000/api/chat", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            messages: messages.map(m => ({
-              role: m.role,
-              content: m.content.map(c => {
-                if (c.type === "text") return c.text;
-                return "";
-              }).join("\n"),
-            })),
-            thread_id: threadId,
-            model,
-            thinking,
-            mode, // Add mode to the request
-          }),
-          signal: abortSignal,
-        });
-
-        if (!response.ok || !response.body) {
-          throw new Error("Failed to fetch from backend");
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let accumulatedContent = "";
-        let statusLine = ""; // Track current status separately
-        let buffer = "";
-        let pendingYield = false;
-        let lastYieldTime = 0;
-        const MIN_YIELD_INTERVAL = 16; // ~60fps for smooth streaming without browser hang
-
-        // Helper to throttle yields
-        const shouldYield = () => {
-          const now = Date.now();
-          if (now - lastYieldTime >= MIN_YIELD_INTERVAL) {
-            lastYieldTime = now;
-            return true;
-          }
-          pendingYield = true;
-          return false;
-        };
-
+  const MyModelAdapter: ChatModelAdapter = useMemo(
+    () => ({
+      async *run({ messages, abortSignal }) {
         try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
+          // Get mode from sessionStorage
+          const mode = sessionStorage.getItem("assistant_mode") || null;
 
-            // Decode and process immediately for smooth streaming
-            buffer += decoder.decode(value, { stream: true });
-            
-            // Split on newlines - each complete line is a JSON event
-            const lines = buffer.split("\n");
-            // Keep incomplete line in buffer
-            buffer = lines.pop() || "";
+          // Check if this is an approval for investigator
+          const lastMessage = messages[messages.length - 1];
+          const lastContent = lastMessage.content
+            .map((c) => {
+              if (c.type === "text") return c.text;
+              return "";
+            })
+            .join("\n")
+            .trim();
 
-            let contentUpdated = false;
-            
-            for (const line of lines) {
-              if (!line.trim()) continue;
-              try {
-                const data = JSON.parse(line);
-                
-                if (data.type === "thought") {
-                  if (!accumulatedContent.includes("> **Thinking**")) {
-                    accumulatedContent += "\n\n> **Thinking**\n> ";
-                  }
-                  accumulatedContent += data.content.replaceAll("\n", "\n> ");
-                  contentUpdated = true;
-                } else if (data.type === "content") {
-                  const content = data.content;
-                  if (content) {
-                    // Only filter if the ENTIRE content looks like JSON (not just a bracket in text)
-                    const trimmed = content.trim();
-                    const looksLikeJson = (trimmed.startsWith('{"') && trimmed.endsWith('}')) || 
-                                          (trimmed.startsWith('[{') && trimmed.endsWith(']'));
-                    if (!looksLikeJson) {
-                      accumulatedContent += content;
-                      contentUpdated = true;
+          // Get mode to determine if this is a new investigation
+          const isInvestigatorMode = mode === "investigator";
+
+          // If this is a new investigation (investigator mode + no existing thread_id),
+          // clear any old thread_id to prevent resuming old threads
+          const investigatorThreadId = (window as any).__investigator_thread_id;
+          if (isInvestigatorMode && !investigatorThreadId) {
+            // New investigation - make sure old thread_id is cleared
+            if (typeof window !== "undefined") {
+              delete (window as any).__investigator_thread_id;
+            }
+          }
+
+          // If user is typing a new topic (not approve/feedback), clear thread_id
+          if (isInvestigatorMode && investigatorThreadId) {
+            const lowerContent = lastContent.toLowerCase().trim();
+            const isApprovalOrFeedback =
+              lowerContent === "approve" ||
+              lowerContent.startsWith("here is my feedback") ||
+              lowerContent.includes("feedback") ||
+              lowerContent === "ok" ||
+              lowerContent === "okay" ||
+              lowerContent === "yes" ||
+              lowerContent === "go" ||
+              lowerContent === "proceed";
+
+            // If it's not approval/feedback, treat as new investigation
+            if (!isApprovalOrFeedback) {
+              if (typeof window !== "undefined") {
+                delete (window as any).__investigator_thread_id;
+              }
+            }
+          }
+
+          const currentInvestigatorThreadId = (window as any)
+            .__investigator_thread_id;
+          const investigatorIntent =
+            typeof window !== "undefined"
+              ? (window as any).__investigator_intent
+              : undefined;
+
+          if (typeof window !== "undefined") {
+            delete (window as any).__investigator_intent;
+          }
+
+          const response = await fetch("http://localhost:8000/api/chat", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              messages: messages.map((m) => ({
+                role: m.role,
+                content: m.content
+                  .map((c) => {
+                    if (c.type === "text") return c.text;
+                    return "";
+                  })
+                  .join("\n"),
+              })),
+              thread_id: threadId,
+              model,
+              thinking,
+              mode, // Add mode to the request
+              investigator_thread: currentInvestigatorThreadId,
+              investigator_feedback: currentInvestigatorThreadId
+                ? lastContent || "Approved"
+                : undefined,
+              investigator_intent: investigatorIntent,
+            }),
+            signal: abortSignal,
+          });
+
+          if (!response.ok || !response.body) {
+            throw new Error("Failed to fetch from backend");
+          }
+
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let accumulatedContent = "";
+          let statusLine = ""; // Track current status separately
+          let buffer = "";
+          let pendingYield = false;
+          let lastYieldTime = 0;
+          const MIN_YIELD_INTERVAL = 16; // ~60fps for smooth streaming without browser hang
+
+          // Helper to throttle yields
+          const shouldYield = () => {
+            const now = Date.now();
+            if (now - lastYieldTime >= MIN_YIELD_INTERVAL) {
+              lastYieldTime = now;
+              return true;
+            }
+            pendingYield = true;
+            return false;
+          };
+
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+
+              // Decode and process immediately for smooth streaming
+              buffer += decoder.decode(value, { stream: true });
+
+              // Split on newlines - each complete line is a JSON event
+              const lines = buffer.split("\n");
+              // Keep incomplete line in buffer
+              buffer = lines.pop() || "";
+
+              let contentUpdated = false;
+
+              for (const line of lines) {
+                if (!line.trim()) continue;
+                try {
+                  const data = JSON.parse(line);
+
+                  if (data.type === "thought") {
+                    if (!accumulatedContent.includes("> **Thinking**")) {
+                      accumulatedContent += "\n\n> **Thinking**\n> ";
                     }
-                  }
-                } else if (data.type === "status") {
-                  // Show status as a temporary indicator, don't accumulate
-                  statusLine = data.content;
-                  // Always yield status updates immediately
-                  yield {
-                    content: [{ type: "text", text: accumulatedContent + `\n\n---\n*${statusLine}*` }],
-                  };
-                  lastYieldTime = Date.now();
-                } else if (data.type === "tool_start") {
-                  // Show tool activity as temporary status
-                  const toolName = data.tool_name || data.tool || "tool";
-                  statusLine = `🔍 Running ${toolName}...`;
-                  yield {
-                    content: [{ type: "text", text: accumulatedContent + `\n\n---\n*${statusLine}*` }],
-                  };
-                  lastYieldTime = Date.now();
-                } else if (data.type === "plan_delta") {
-                  // Brew mode incremental task plan streaming
-                  if (!accumulatedContent.includes("### 🎯 Task Plan")) {
-                    accumulatedContent += `\n\n### 🎯 Task Plan\n`;
-                    if (data.reasoning) {
-                      accumulatedContent += `\n> ${data.reasoning}\n`;
-                    }
-                  }
-                  const emoji: Record<string, string> = {
-                    research: "🔍",
-                    content: "✍️",
-                    analytics: "📊",
-                    social: "📱",
-                    general: "💬",
-                  };
-                  const worker = data.worker || "worker";
-                  const task = data.task || "";
-                  accumulatedContent += `\n- ${emoji[worker] || "📋"} **${worker}**: ${task}`;
-                  // Yield immediately so the plan visibly grows line-by-line
-                  yield {
-                    content: [{ type: "text", text: accumulatedContent }],
-                  };
-                  lastYieldTime = Date.now();
-                } else if (data.type === "plan") {
-                  // Handle brew mode task plans
-                  let planText = "";
-                  if (Array.isArray(data.content)) {
-                    planText = data.content.map((item: any) => {
-                      // Brew mode format: { worker, task, priority }
-                      if (item.worker && item.task) {
-                        const emoji: Record<string, string> = {
-                          research: "🔍",
-                          content: "✍️",
-                          analytics: "📊",
-                          social: "📱"
-                        };
-                        return `- ${emoji[item.worker] || "📋"} **${item.worker}**: ${item.task}`;
+                    accumulatedContent += data.content.replaceAll("\n", "\n> ");
+                    contentUpdated = true;
+                  } else if (data.type === "content") {
+                    const content = data.content;
+                    if (content) {
+                      // Only filter if the ENTIRE content looks like JSON (not just a bracket in text)
+                      const trimmed = content.trim();
+                      const looksLikeJson =
+                        (trimmed.startsWith('{"') && trimmed.endsWith("}")) ||
+                        (trimmed.startsWith("[{") && trimmed.endsWith("]"));
+                      if (!looksLikeJson) {
+                        accumulatedContent += content;
+                        contentUpdated = true;
                       }
-                      // Legacy format
-                      return `- ${item.task || item}`;
-                    }).join("\n");
-                  } else {
-                    planText = String(data.content);
+                    }
+                  } else if (data.type === "investigator_start") {
+                    // Investigator starting - clear any old thread_id
+                    if (typeof window !== "undefined") {
+                      delete (window as any).__investigator_thread_id;
+                    }
+                    accumulatedContent += data.content + "\n\n";
+                    contentUpdated = true;
+                  } else if (data.type === "investigator_plan") {
+                    // Research plan generated - show with approval design
+                    const plan = data.plan;
+                    const tasks = plan.tasks || [];
+                    let planMarkdown = `### 📋 Research Plan Generated\n\nI've analyzed your topic and created a research strategy. Please review the tasks below:\n\n`;
+
+                    tasks.forEach((task: any, idx: number) => {
+                      planMarkdown += `${idx + 1}. **${task.name}**: ${
+                        task.goal
+                      }\n`;
+                    });
+
+                    accumulatedContent +=
+                      "\n" +
+                      planMarkdown +
+                      "\n\n" +
+                      "--- \n" +
+                      "### 💡 Next Steps\n" +
+                      "You can **approve** this plan or provide **feedback** to modify it.\n";
+
+                    // Store thread_id for approval
+                    (window as any).__investigator_thread_id = data.thread_id;
+                    contentUpdated = true;
+
+                    // Yield with suggestions (buttons)
+                    yield {
+                      content: [{ type: "text", text: accumulatedContent }],
+                      suggestions: [
+                        { label: "✅ Approve & Start", prompt: "approve" },
+                        {
+                          label: "📝 Modify Plan",
+                          prompt: "I'd like to change...",
+                        },
+                      ],
+                    };
+                    lastYieldTime = Date.now();
+                    continue; // Skip the default yield below to use our custom one with suggestions
+                  } else if (data.type === "investigator_status") {
+                    // Status update during execution
+                    accumulatedContent += "\n" + data.content + "\n";
+                    contentUpdated = true;
+                  } else if (data.type === "investigator_report") {
+                    // Final report
+                    accumulatedContent +=
+                      "\n\n## 📊 Final Research Report\n\n" +
+                      data.content +
+                      "\n";
+                    contentUpdated = true;
+                  } else if (data.type === "investigator_complete") {
+                    // Research complete
+                    accumulatedContent += "\n\n" + data.content + "\n";
+                    contentUpdated = true;
+                    // Clear stored thread
+                    delete (window as any).__investigator_thread_id;
+                  } else if (data.type === "status") {
+                    // Show status as a temporary indicator, don't accumulate
+                    statusLine = data.content;
+                    // Always yield status updates immediately
+                    yield {
+                      content: [
+                        {
+                          type: "text",
+                          text: accumulatedContent + `\n\n---\n*${statusLine}*`,
+                        },
+                      ],
+                    };
+                    lastYieldTime = Date.now();
+                  } else if (data.type === "tool_start") {
+                    // Show tool activity as temporary status
+                    const toolName = data.tool_name || data.tool || "tool";
+                    statusLine = `🔍 Running ${toolName}...`;
+                    yield {
+                      content: [
+                        {
+                          type: "text",
+                          text: accumulatedContent + `\n\n---\n*${statusLine}*`,
+                        },
+                      ],
+                    };
+                    lastYieldTime = Date.now();
+                  } else if (data.type === "plan_delta") {
+                    // Brew mode incremental task plan streaming
+                    if (!accumulatedContent.includes("### 🎯 Task Plan")) {
+                      accumulatedContent += `\n\n### 🎯 Task Plan\n`;
+                      if (data.reasoning) {
+                        accumulatedContent += `\n> ${data.reasoning}\n`;
+                      }
+                    }
+                    const emoji: Record<string, string> = {
+                      research: "🔍",
+                      content: "✍️",
+                      analytics: "📊",
+                      social: "📱",
+                      general: "💬",
+                    };
+                    const worker = data.worker || "worker";
+                    const task = data.task || "";
+                    accumulatedContent += `\n- ${
+                      emoji[worker] || "📋"
+                    } **${worker}**: ${task}`;
+                    // Yield immediately so the plan visibly grows line-by-line
+                    yield {
+                      content: [{ type: "text", text: accumulatedContent }],
+                    };
+                    lastYieldTime = Date.now();
+                  } else if (data.type === "plan") {
+                    // Handle brew mode task plans
+                    let planText = "";
+                    if (Array.isArray(data.content)) {
+                      planText = data.content
+                        .map((item: any) => {
+                          // Brew mode format: { worker, task, priority }
+                          if (item.worker && item.task) {
+                            const emoji: Record<string, string> = {
+                              research: "🔍",
+                              content: "✍️",
+                              analytics: "📊",
+                              social: "📱",
+                            };
+                            return `- ${emoji[item.worker] || "📋"} **${
+                              item.worker
+                            }**: ${item.task}`;
+                          }
+                          // Legacy format
+                          return `- ${item.task || item}`;
+                        })
+                        .join("\n");
+                    } else {
+                      planText = String(data.content);
+                    }
+                    const reasoning = data.reasoning
+                      ? `\n> ${data.reasoning}\n`
+                      : "";
+                    accumulatedContent += `\n\n### 🎯 Task Plan\n${reasoning}\n${planText}`;
+                    // Always yield plan immediately
+                    yield {
+                      content: [{ type: "text", text: accumulatedContent }],
+                    };
+                    lastYieldTime = Date.now();
+                  } else if (data.type === "worker_start") {
+                    // Brew mode worker start - show as status
+                    const emoji: Record<string, string> = {
+                      research: "🔍",
+                      content: "✍️",
+                      analytics: "📊",
+                      social: "📱",
+                      general: "💬",
+                    };
+                    const worker = data.worker || "worker";
+                    statusLine = `${
+                      emoji[worker] || "⏳"
+                    } ${worker} working...`;
+                    yield {
+                      content: [
+                        {
+                          type: "text",
+                          text: accumulatedContent + `\n\n---\n*${statusLine}*`,
+                        },
+                      ],
+                    };
+                    lastYieldTime = Date.now();
+                  } else if (data.type === "worker_complete") {
+                    // Brew mode worker completion - show as status
+                    const emoji: Record<string, string> = {
+                      research: "🔍",
+                      content: "✍️",
+                      analytics: "📊",
+                      social: "📱",
+                      general: "💬",
+                    };
+                    statusLine = `${emoji[data.worker] || "✅"} ${
+                      data.worker
+                    } completed`;
+                    yield {
+                      content: [
+                        {
+                          type: "text",
+                          text: accumulatedContent + `\n\n---\n*${statusLine}*`,
+                        },
+                      ],
+                    };
+                    lastYieldTime = Date.now();
+                  } else if (data.type === "tool_result") {
+                    // Optionally show tool results briefly
+                    // Skip for cleaner output
                   }
-                  const reasoning = data.reasoning ? `\n> ${data.reasoning}\n` : "";
-                  accumulatedContent += `\n\n### 🎯 Task Plan\n${reasoning}\n${planText}`;
-                  // Always yield plan immediately
-                  yield {
-                    content: [{ type: "text", text: accumulatedContent }],
-                  };
-                  lastYieldTime = Date.now();
-                } else if (data.type === "worker_start") {
-                  // Brew mode worker start - show as status
-                  const emoji: Record<string, string> = {
-                    research: "🔍",
-                    content: "✍️",
-                    analytics: "📊",
-                    social: "📱",
-                    general: "💬",
-                  };
-                  const worker = data.worker || "worker";
-                  statusLine = `${emoji[worker] || "⏳"} ${worker} working...`;
-                  yield {
-                    content: [{ type: "text", text: accumulatedContent + `\n\n---\n*${statusLine}*` }],
-                  };
-                  lastYieldTime = Date.now();
-                } else if (data.type === "worker_complete") {
-                  // Brew mode worker completion - show as status
-                  const emoji: Record<string, string> = {
-                    research: "🔍",
-                    content: "✍️",
-                    analytics: "📊",
-                    social: "📱",
-                    general: "💬",
-                  };
-                  statusLine = `${emoji[data.worker] || "✅"} ${data.worker} completed`;
-                  yield {
-                    content: [{ type: "text", text: accumulatedContent + `\n\n---\n*${statusLine}*` }],
-                  };
-                  lastYieldTime = Date.now();
-                } else if (data.type === "tool_result") {
-                  // Optionally show tool results briefly
-                  // Skip for cleaner output
+                } catch (e) {
+                  console.error("Error parsing NDJSON chunk", e);
                 }
-              } catch (e) {
-                console.error("Error parsing NDJSON chunk", e);
+              }
+
+              // Throttled yield for content updates (prevents browser hang)
+              if (contentUpdated && shouldYield()) {
+                yield {
+                  content: [{ type: "text", text: accumulatedContent }],
+                };
               }
             }
 
-            // Throttled yield for content updates (prevents browser hang)
-            if (contentUpdated && shouldYield()) {
+            // Final yield for any pending content
+            if (pendingYield || accumulatedContent) {
               yield {
                 content: [{ type: "text", text: accumulatedContent }],
               };
             }
+          } finally {
+            reader.releaseLock();
           }
-          
-          // Final yield for any pending content
-          if (pendingYield || accumulatedContent) {
-            yield {
-              content: [{ type: "text", text: accumulatedContent }],
-            };
+        } catch (error: any) {
+          if (error.name === "AbortError") {
+            return;
           }
-        } finally {
-          reader.releaseLock();
+          throw error;
         }
-      } catch (error: any) {
-        if (error.name === 'AbortError') {
-          return;
-        }
-        throw error;
-      }
-    },
-  }), [threadId, model, thinking]);
+      },
+    }),
+    [threadId, model, thinking]
+  );
 
   const runtime = useLocalRuntime(MyModelAdapter, {
     initialMessages,
@@ -290,30 +453,51 @@ function InnerRuntimeProvider({
     return runtime.thread.subscribe(() => {
       const state = runtime.thread.getState();
       if (state.messages.length > 0) {
-        localStorage.setItem(`assistant_messages_${threadId}`, JSON.stringify(state.messages));
-        
+        localStorage.setItem(
+          `assistant_messages_${threadId}`,
+          JSON.stringify(state.messages)
+        );
+
         // Update thread list metadata
         const savedThreads = localStorage.getItem("assistant_threads") || "[]";
         let threadsContent = [];
         try {
-           threadsContent = JSON.parse(savedThreads);
-        } catch { threadsContent = []; }
-        
-        const firstUserMessage = state.messages.find(m => m.role === "user");
-        const autoTitle = firstUserMessage?.content[0]?.type === "text" 
-          ? firstUserMessage.content[0].text.slice(0, 30) 
-          : "New Chat";
-            
-        const threadIndex = threadsContent.findIndex((t: any) => t.id === threadId);
+          threadsContent = JSON.parse(savedThreads);
+        } catch {
+          threadsContent = [];
+        }
+
+        const firstUserMessage = state.messages.find((m) => m.role === "user");
+        const autoTitle =
+          firstUserMessage?.content[0]?.type === "text"
+            ? firstUserMessage.content[0].text.slice(0, 30)
+            : "New Chat";
+
+        const threadIndex = threadsContent.findIndex(
+          (t: any) => t.id === threadId
+        );
         if (threadIndex > -1) {
           // Only update title if it hasn't been manually edited
           const existingThread = threadsContent[threadIndex];
-          const newTitle = existingThread.titleEdited ? existingThread.title : autoTitle;
-          threadsContent[threadIndex] = { ...existingThread, title: newTitle, updatedAt: Date.now() };
+          const newTitle = existingThread.titleEdited
+            ? existingThread.title
+            : autoTitle;
+          threadsContent[threadIndex] = {
+            ...existingThread,
+            title: newTitle,
+            updatedAt: Date.now(),
+          };
         } else {
-          threadsContent.unshift({ id: threadId, title: autoTitle, updatedAt: Date.now() }); // Push to top
+          threadsContent.unshift({
+            id: threadId,
+            title: autoTitle,
+            updatedAt: Date.now(),
+          }); // Push to top
         }
-        localStorage.setItem("assistant_threads", JSON.stringify(threadsContent));
+        localStorage.setItem(
+          "assistant_threads",
+          JSON.stringify(threadsContent)
+        );
         window.dispatchEvent(new Event("assistant-threads-updated"));
       }
     });

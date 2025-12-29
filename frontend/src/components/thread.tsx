@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import {
   ActionBarPrimitive,
   AssistantIf,
+  useMessage,
   BranchPickerPrimitive,
   ComposerPrimitive,
   ErrorPrimitive,
@@ -31,12 +32,12 @@ import {
   UserIcon,
   SparklesIcon,
   ChevronDownIcon,
-  Globe,
-  Telescope
+  Search,
+  Coffee,
 } from "lucide-react";
-import type { FC } from "react";
+import type { FC, MouseEvent } from "react";
 import { type Mode } from "@/components/mode-selector";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -138,10 +139,11 @@ const ThreadSuggestions: FC = () => {
         setSelectedMode(mode);
       }
     };
-    
+
     // Listen for mode changes via custom event
     window.addEventListener("assistant-mode-changed", handleModeChange);
-    return () => window.removeEventListener("assistant-mode-changed", handleModeChange);
+    return () =>
+      window.removeEventListener("assistant-mode-changed", handleModeChange);
   }, []);
 
   if (!selectedMode) {
@@ -179,6 +181,9 @@ const ThreadSuggestions: FC = () => {
 const Composer: FC = () => {
   const [selectedMode, setSelectedMode] = useState<Mode>(() => {
     // Default to null (no mode selected) - Brew Mode
+    if (typeof window !== "undefined") {
+      return (sessionStorage.getItem("assistant_mode") as Mode) || null;
+    }
     return null;
   });
 
@@ -195,25 +200,20 @@ const Composer: FC = () => {
 
   const modes = [
     {
-      id: "search" as const,
-      label: "Search",
-      description: "Fast answers to everyday questions",
-      icon: Globe,
-    },
-    {
-      id: "research" as const,
-      label: "Research",
-      description: "Deep research on any topic",
-      icon: Telescope,
+      id: "investigator" as const,
+      label: "Investigator",
+      description: "Deep research with human-in-the-loop",
+      icon: Search,
     },
   ];
 
-  const currentMode = modes.find(m => m.id === selectedMode);
+  const currentMode = modes.find((m) => m.id === selectedMode);
   // Default to Brew Mode icon (coffee cup or similar) when no mode selected
-  const ModeIcon = currentMode?.icon || SparklesIcon;
-  const placeholder = selectedMode 
-    ? `${currentMode?.label} anything...` 
-    : "Brew anything...";
+  const ModeIcon = currentMode?.icon || Coffee;
+  const placeholder =
+    selectedMode === "investigator"
+      ? "Enter research topic..."
+      : "Brew anything...";
 
   return (
     <ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
@@ -226,11 +226,19 @@ const Composer: FC = () => {
                 <button
                   type="button"
                   className={cn(
-                    "reset interactable select-none outline-none font-semibold duration-300 ease-out font-sans text-center items-center justify-center leading-loose whitespace-nowrap data-[state=open]:text-foreground data-[state=open]:bg-subtle text-muted-foreground h-8 text-sm cursor-pointer origin-center active:scale-[0.97] active:duration-150 active:ease-outExpo inline-flex hover:text-foreground hover:bg-subtle rounded-lg px-2 gap-1.5"
+                    "reset interactable select-none outline-none font-semibold duration-300 ease-out font-sans text-center items-center justify-center leading-loose whitespace-nowrap data-[state=open]:text-foreground data-[state=open]:bg-subtle text-muted-foreground h-8 text-sm cursor-pointer origin-center active:scale-[0.97] active:duration-150 active:ease-outExpo inline-flex hover:text-foreground hover:bg-subtle rounded-lg px-2 gap-1.5",
+                    selectedMode === "investigator" &&
+                      "text-primary bg-primary/10 hover:bg-primary/20"
                   )}
                 >
-                  <ModeIcon className="size-4" />
-                  <span className="font-medium hidden sm:inline">{currentMode?.label || "Brew"}</span>
+                  {selectedMode === "investigator" ? (
+                    <SparklesIcon className="size-4" />
+                  ) : (
+                    <Coffee className="size-4" />
+                  )}
+                  <span className="font-medium hidden sm:inline">
+                    {selectedMode === "investigator" ? "Investigator" : "Brew"}
+                  </span>
                   <ChevronDownIcon className="size-3.5 opacity-70" />
                 </button>
               </DropdownMenuTrigger>
@@ -239,10 +247,12 @@ const Composer: FC = () => {
                   onClick={() => setSelectedMode(null)}
                   className="flex items-center gap-2 cursor-pointer"
                 >
-                  <SparklesIcon className="size-4 text-foreground" />
+                  <Coffee className="size-4 text-foreground" />
                   <div className="flex flex-col">
                     <span className="font-medium text-foreground">Brew</span>
-                    <span className="text-xs text-muted-foreground">Default mode</span>
+                    <span className="text-xs text-muted-foreground">
+                      Default mode
+                    </span>
                   </div>
                 </DropdownMenuItem>
                 {modes.map((mode) => {
@@ -255,8 +265,12 @@ const Composer: FC = () => {
                     >
                       <Icon className="size-4 text-foreground" />
                       <div className="flex flex-col">
-                        <span className="font-medium text-foreground">{mode.label}</span>
-                        <span className="text-xs text-muted-foreground">{mode.description}</span>
+                        <span className="font-medium text-foreground">
+                          {mode.label}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {mode.description}
+                        </span>
                       </div>
                     </DropdownMenuItem>
                   );
@@ -327,13 +341,26 @@ const MessageError: FC = () => {
 };
 
 const AssistantMessage: FC = () => {
+  const messageContent = useMessage((m: any) => m.content);
+  const textContent = useMemo(() => {
+    if (!messageContent) return "";
+    return messageContent
+      .map((part: any) => (part.type === "text" ? part.text : ""))
+      .join("")
+      .trim();
+  }, [messageContent]);
+
+  const isInvestigatorPlan =
+    textContent.includes("Research Plan Generated") ||
+    textContent.includes("Next Steps");
+
   return (
     <MessagePrimitive.Root
       className="aui-assistant-message-root fade-in slide-in-from-bottom-1 relative mx-auto w-full max-w-(--thread-max-width) animate-in py-3 sm:py-4 duration-150 flex gap-2 sm:gap-4"
       data-role="assistant"
     >
-      <div className="flex-shrink-0 size-8 rounded-full bg-primary/10 flex items-center justify-center text-primary mt-1">
-         <SparklesIcon className="size-4" />
+      <div className="shrink-0 size-8 rounded-full bg-primary/10 flex items-center justify-center text-primary mt-1">
+        <SparklesIcon className="size-4" />
       </div>
       <div className="flex-1 min-w-0">
         <div className="aui-assistant-message-content wrap-break-word text-foreground leading-relaxed">
@@ -343,6 +370,7 @@ const AssistantMessage: FC = () => {
               tools: { Fallback: ToolFallback },
             }}
           />
+          {isInvestigatorPlan && <PlanActionButtons />}
           <MessageError />
         </div>
 
@@ -390,11 +418,11 @@ const AssistantActionBar: FC = () => {
 const UserMessage: FC = () => {
   return (
     <MessagePrimitive.Root
-      className="aui-user-message-root fade-in slide-in-from-bottom-1 mx-auto grid w-full max-w-(--thread-max-width) animate-in auto-rows-auto grid-cols-[minmax(72px,1fr)_auto] content-start gap-y-2 px-2 sm:px-4 py-3 sm:py-4 duration-150 [&:where(>*)]:col-start-2 flex gap-2 sm:gap-4"
+      className="aui-user-message-root fade-in slide-in-from-bottom-1 mx-auto grid w-full max-w-(--thread-max-width) animate-in auto-rows-auto grid-cols-[minmax(72px,1fr)_auto] content-start gap-2 sm:gap-4 px-2 sm:px-4 py-3 sm:py-4 duration-150 [&:where(>*)]:col-start-2"
       data-role="user"
     >
-      <div className="flex-shrink-0 size-8 rounded-full bg-muted flex items-center justify-center text-muted-foreground mt-1 order-last">
-         <UserIcon className="size-4" />
+      <div className="shrink-0 size-8 rounded-full bg-muted flex items-center justify-center text-muted-foreground mt-1 order-last">
+        <UserIcon className="size-4" />
       </div>
       <div className="flex-1 min-w-0">
         <UserMessageAttachments />
@@ -430,6 +458,67 @@ const UserActionBar: FC = () => {
   );
 };
 
+const PlanActionButtons: FC = () => {
+  const handleApprove = (e: MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    if (typeof window !== "undefined") {
+      (window as any).__investigator_intent = "approve";
+      // Find the composer input and set its value, then trigger send
+      const composerInput = document.querySelector(
+        ".aui-composer-input"
+      ) as HTMLTextAreaElement;
+      if (composerInput) {
+        composerInput.value = "approve";
+        composerInput.dispatchEvent(new Event("input", { bubbles: true }));
+        // Trigger send button click
+        const sendButton = document.querySelector(
+          ".aui-composer-send"
+        ) as HTMLButtonElement;
+        if (sendButton && !sendButton.disabled) {
+          sendButton.click();
+        }
+      }
+    }
+  };
+
+  const handleFeedback = (e: MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    if (typeof window !== "undefined") {
+      (window as any).__investigator_intent = "feedback";
+      // Find the composer input and set its value, then trigger send
+      const composerInput = document.querySelector(
+        ".aui-composer-input"
+      ) as HTMLTextAreaElement;
+      if (composerInput) {
+        composerInput.value = "Here is my feedback on the plan: ";
+        composerInput.dispatchEvent(new Event("input", { bubbles: true }));
+        // Focus the input so user can add their feedback
+        composerInput.focus();
+        composerInput.setSelectionRange(
+          composerInput.value.length,
+          composerInput.value.length
+        );
+      }
+    }
+  };
+
+  return (
+    <div className="mt-4 flex flex-wrap gap-2">
+      <Button size="sm" className="rounded-full" onClick={handleApprove}>
+        ✅ Approve & start
+      </Button>
+      <Button
+        size="sm"
+        variant="outline"
+        className="rounded-full"
+        onClick={handleFeedback}
+      >
+        📝 Add feedback
+      </Button>
+    </div>
+  );
+};
+
 const EditComposer: FC = () => {
   return (
     <MessagePrimitive.Root className="aui-edit-composer-wrapper mx-auto flex w-full max-w-(--thread-max-width) flex-col px-2 py-3">
@@ -462,7 +551,7 @@ const BranchPicker: FC<BranchPickerPrimitive.Root.Props> = ({
       hideWhenSingleBranch
       className={cn(
         "aui-branch-picker-root mr-2 -ml-2 inline-flex items-center text-muted-foreground text-xs",
-        className,
+        className
       )}
       {...rest}
     >
