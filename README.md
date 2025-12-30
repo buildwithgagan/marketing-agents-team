@@ -4,13 +4,12 @@ A sophisticated multi-agent AI system designed for comprehensive marketing resea
 
 ## ✨ Key Features
 
-- **Multi-Mode Architecture**: Three specialized modes - **Brew** (default), **Search**, and **Research** - each optimized for different complexity levels
-- **Brew Mode - Multi-Agent Orchestration**: Master orchestrator with specialized workers (Research, Content, Analytics, Social, General) working sequentially based on task priority
+- **Multi-Mode Architecture**: Distinct operational modes - **Brew** (Standard Chat) and **Investigator** (Deep Research)
+- **Investigator Mode - Human-in-the-Loop**: A research protocol that generates a strategic plan, waits for user approval/feedback, and then executes automatically
+- **Automated Execution Flow**: Once the plan is approved, the system seamlessly transitions from planning to multi-step research execution and final reporting
 - **Advanced Model Support**: Optimized for GPT-4.1, GPT-5 series (with reasoning/thinking modes), and OpenAI o1/o3 series
-- **Thinking/Reasoning Toggle**: Dynamic control over model reasoning effort (high/low) for rapid answers or deep analysis
-- **Real-time Streaming**: Rich UI experience with streaming thoughts, status updates, tool calls, worker progress, and task plans
-- **Tavily MCP Integration**: Leverages Tavily's Model Context Protocol (MCP) for high-tier web searching and full-text extraction
-- **Thread-based Conversations**: Persistent conversation history with thread management
+- **Real-time Streaming**: Rich UI experience with streaming thoughts, status updates, tool calls, task plans, and final reports
+- **Professional Toolset**: Specialized tools for competitor scraping, Google Trends analysis, and SEO keyword research
 - **Modern UI/UX**: Built with Next.js 15+, Tailwind CSS 4, Radix UI, and `@assistant-ui/react`
 
 ---
@@ -19,48 +18,31 @@ A sophisticated multi-agent AI system designed for comprehensive marketing resea
 
 ### System Overview
 
-The system consists of three operational modes, each with distinct architectures:
+The system consists of two primary operational modes:
 
-#### **Brew Mode** (Default) - Multi-Agent Orchestration
+#### **Brew Mode** (Default) - Standard Chat
+- Simple ReAct-style agent for general-purpose chat and marketing questions
+- Maintains conversation history and thread context
+- Optimized for quick, direct interaction
 
-- **Planner**: Tool-less master orchestrator that analyzes queries and creates structured task plans
-- **Workers**: Specialized deep agent workers that execute tasks sequentially based on priority:
-  - **Research Worker**: Web research, fact-finding, summaries (has Tavily tools)
-  - **Content Worker**: Writing, copy, posts, messaging (has Tavily tools)
-  - **Analytics Worker**: Metrics, KPIs, analysis, experiments (has Tavily tools)
-  - **Social Worker**: Platform strategy, content ideas, hooks (has Tavily tools)
-  - **General Worker**: General questions without web access
-- **Synthesizer**: Tool-less master that combines worker reports into a unified final response
-
-#### **Search Mode** - Fast Single-Agent
-
-- Simple ReAct loop with a single agent
-- Optimized for quick answers to everyday questions
-- Direct tool execution without multi-agent coordination
-
-#### **Research Mode** - Deep Research
-
-- Master agent with specialized subagents
-- Discovery agent for finding relevant sources
-- Extraction agent for deep content extraction
-- Multi-phase research protocol
+#### **Investigator Mode** - Strategic Lead Gen & Research
+- **Planner**: Strategic lead that analyzes the topic and builds a 20-25 task research plan
+- **Human-in-the-Loop**: Interrupts execution to allow user review and modification of the research plan
+- **Executor**: Non-conversational "Intelligence Officer" that executes the approved plan using specialized tools
+- **Reporter**: CMO-level synthesizer that compiles all findings into a professional growth strategy report
 
 ### Backend (Python/FastAPI)
 
 - **Framework**: FastAPI for high-performance streaming
-- **Agent Logic**: LangGraph for complex agentic workflows
-- **Agent Modes**: Brew (default), Search, Research
-- **Research Tools**: Tavily Search & Extract via MCP
-- **Persistence**: Memory checkpointer for thread history and state management
-- **Streaming**: Server-Sent Events (SSE) for real-time updates
+- **Agent Logic**: LangGraph for stateful multi-phase workflows
+- **Persistence**: SQLite checkpointer for robust thread management and state recovery
+- **Streaming**: Server-Sent Events (SSE) for real-time updates across all phases
 
 ### Frontend (Next.js)
 
 - **Framework**: Next.js 15+ (App Router)
-- **Styling**: Tailwind CSS 4 & Lucide React icons
-- **Components**: Radix UI & Shadcn UI
+- **Styling**: Tailwind CSS 4
 - **AI Interface**: `@assistant-ui/react` for polished chat experience
-- **State Management**: LocalStorage for thread persistence
 
 ---
 
@@ -70,7 +52,6 @@ The system consists of three operational modes, each with distinct architectures
 graph TB
     subgraph "Frontend (Next.js)"
         UI[User Interface]
-        ThreadMgr[Thread Manager]
         Runtime[Assistant Runtime]
     end
 
@@ -78,102 +59,72 @@ graph TB
         API[FastAPI Server]
         AgentMgr[Agent Manager]
 
-        subgraph "Brew Mode (Default)"
-            Planner[Master Planner]
-            RWorker[Research Worker]
-            CWorker[Content Worker]
-            AWorker[Analytics Worker]
-            SWorker[Social Worker]
-            GWorker[General Worker]
-            Synthesizer[Master Synthesizer]
+        subgraph "Investigator Mode"
+            Planner[Strategic Planner]
+            Executor[Intelligence Executor]
+            Reporter[CMO Reporter]
         end
 
-        subgraph "Search Mode"
-            SearchAgent[Search Agent]
-        end
-
-        subgraph "Research Mode"
-            MasterAgent[Master Agent]
-            DiscoveryAgent[Discovery Subagent]
-            ExtractAgent[Extraction Subagent]
+        subgraph "Brew Mode"
+            BrewAgent[Chat Agent]
         end
     end
 
     subgraph "External Services"
-        TavilyMCP[Tavily MCP]
+        Tavily[Tavily API]
         OpenAI[OpenAI API]
+        Google[Google Trends]
     end
 
     UI -->|HTTP/SSE| API
     API --> AgentMgr
-    AgentMgr -->|Brew Mode| Planner
-    Planner -->|Task Plan| RWorker
-    Planner -->|Task Plan| CWorker
-    Planner -->|Task Plan| AWorker
-    Planner -->|Task Plan| SWorker
-    Planner -->|Task Plan| GWorker
-    RWorker -->|Reports| Synthesizer
-    CWorker -->|Reports| Synthesizer
-    AWorker -->|Reports| Synthesizer
-    SWorker -->|Reports| Synthesizer
-    GWorker -->|Reports| Synthesizer
-    Synthesizer -->|Final Response| API
+    AgentMgr -->|Investigator| Planner
+    Planner -->|User Approval| Executor
+    Executor -->|Findings| Reporter
+    Reporter -->|Final Report| API
 
-    AgentMgr -->|Search Mode| SearchAgent
-    SearchAgent -->|Tool Calls| TavilyMCP
-
-    AgentMgr -->|Research Mode| MasterAgent
-    MasterAgent --> DiscoveryAgent
-    MasterAgent --> ExtractAgent
-    DiscoveryAgent --> TavilyMCP
-    ExtractAgent --> TavilyMCP
-
-    RWorker --> TavilyMCP
-    CWorker --> TavilyMCP
-    AWorker --> TavilyMCP
-    SWorker --> TavilyMCP
+    AgentMgr -->|Brew| BrewAgent
+    BrewAgent --> OpenAI
 
     Planner --> OpenAI
-    Synthesizer --> OpenAI
-    SearchAgent --> OpenAI
-    MasterAgent --> OpenAI
-    RWorker --> OpenAI
-    CWorker --> OpenAI
-    AWorker --> OpenAI
-    SWorker --> OpenAI
-    GWorker --> OpenAI
-    DiscoveryAgent --> OpenAI
-    ExtractAgent --> OpenAI
+    Executor --> OpenAI
+    Executor --> Tavily
+    Executor --> Google
+    Reporter --> OpenAI
 ```
 
-### Brew Mode Flow (Default)
+### Investigator Mode Flow
 
 ```mermaid
 sequenceDiagram
     participant User
     participant API
     participant Planner
-    participant Workers
-    participant Synthesizer
-    participant Tavily
+    participant Executor
+    participant Reporter
 
-    User->>API: Query
-    API->>Planner: Analyze query
-    Planner->>Planner: Create task plan
-    Planner->>API: Stream plan (plan_delta events)
-    API->>User: Display plan
+    User->>API: Start Research (Topic)
+    API->>Planner: Generate Initial Plan
+    Planner->>API: Stream Plan
+    API->>User: Display Plan & Wait
 
-    Planner->>Workers: Dispatch tasks (sequential by priority)
-    Workers->>Tavily: Tool calls (if needed)
-    Tavily-->>Workers: Results
-    Workers->>Workers: Process & generate reports
-    Workers->>API: Stream worker_start/worker_complete
-    API->>User: Display worker progress
+    Note over User, Planner: Human-in-the-Loop Barrier
 
-    Workers->>Synthesizer: Worker reports
-    Synthesizer->>Synthesizer: Combine reports
-    Synthesizer->>API: Stream final response
-    API->>User: Display final answer
+    User->>API: Approve Plan (or Feedback)
+    API->>Planner: Process Approval/Feedback
+    
+    alt User provided Feedback
+        Planner->>API: Stream Updated Plan
+        API->>User: Loop back to Approval
+    else User Approved
+        Planner->>API: Signal [APPROVED]
+        API->>API: Auto-Resume Execution
+        API->>Executor: Run 20+ Research Tasks
+        Executor->>API: Stream Tool Logs & Status
+        Executor->>Reporter: Provide Gathered Data
+        Reporter->>API: Stream Final CMO Report
+        API->>User: Display Strategy Document
+    end
 ```
 
 ---
@@ -231,50 +182,45 @@ The frontend will be available at `http://localhost:3000`.
 
 ---
 
+### 5. Terminal Verification (Investigator Mode)
+
+You can test the Investigator mode directly from your terminal:
+
+```bash
+# Ensure backend is running first
+python run_backend_terminal.py
+```
+
+---
+
 ## 🛠️ Usage
 
 ### Mode Selection
 
-The system supports three modes (Brew is the default):
+The system supports two primary modes:
 
-1. **Brew Mode** (default): Multi-agent orchestration for complex marketing tasks
+1. **Brew Mode** (default): Standard Chat Assistant
+   - **Best for**: Marketing advice, copywriting, brainstorming, and general questions.
+   - **Interface**: Direct chat with streaming responses.
 
-   - Best for: Content strategy, research, analytics, social media planning
-   - Features: Sequential worker execution by priority, task planning, synthesis
+2. **Investigator Mode**: Deep strategic research
+   - **Best for**: Competitor espionage, lead generation, market validation, and CMO-level strategy reports.
+   - **Interface**: 3-phase protocol (Plan -> Execute -> Report) with Human-in-the-Loop approval.
 
-2. **Search Mode**: Fast single-agent search
+### Typical Workflow (Investigator Mode)
 
-   - Best for: Quick answers, simple queries
-   - Features: Direct ReAct loop, minimal overhead
-
-3. **Research Mode**: Deep research with subagents
-   - Best for: Comprehensive research reports
-   - Features: Discovery + extraction phases, detailed synthesis
-
-### Typical Workflow (Brew Mode)
-
-1. **Enter a Query**: Ask a complex marketing question (e.g., "Create a social media strategy for Q1 2025")
-2. **Watch the Plan**: The planner generates a task plan visible in the UI (plan_delta events)
-3. **Monitor Workers**: Track worker progress as they execute tasks sequentially by priority (worker_start/worker_complete events)
-4. **Final Synthesis**: Receive a unified, professional response combining all worker outputs
+1. **Enter a Topic**: Provide a research theme (e.g., "Real Estate Tokenization").
+2. **Review the Plan**: The system generates a structured multi-task research plan.
+3. **Approve or Modify**: 
+   - Press **Enter** to approve and start automated execution.
+   - Type feedback to modify the plan (e.g., "Add competitor Polymesh").
+4. **Automated Search**: The executor runs web searches, scrapes landing pages, and analyzes trends.
+5. **Final Strategy**: Receive a comprehensive professional report.
 
 ### Model Selection
 
-- **Thinking Models**: GPT-5 series, o1/o3 - Enable "Thinking" toggle for high reasoning effort
-- **Classic Models**: GPT-4.1 series - Standard chat models
-
-### Streaming Events
-
-The system streams various event types:
-
-- `plan_delta`: Task plan updates
-- `worker_start`: Worker begins task
-- `worker_complete`: Worker finishes task
-- `status`: Status updates
-- `content`: Token streaming (final response)
-- `thought`: Reasoning/thinking content (for reasoning models)
-- `tool_start`: Tool execution begins
-- `tool_result`: Tool execution results
+- **Thinking Models**: o1/o3 - Optimized for complex planning and reasoning.
+- **Classic Models**: GPT-4.1-mini - Fast and effective for execution and reporting.
 
 ---
 
@@ -284,33 +230,19 @@ The system streams various event types:
 marketing-agents-team/
 ├── backend/
 │   ├── app/
-│   │   ├── agent.py              # Agent Manager (mode orchestration)
-│   │   ├── server.py              # FastAPI streaming endpoints
-│   │   ├── brew/                  # Brew mode implementation
-│   │   │   ├── graph.py           # Brew graph (planner → workers → synthesizer)
-│   │   │   ├── state.py           # State definitions (BrewState, TaskPlan, etc.)
-│   │   │   ├── prompts.py         # System prompts for planner/synthesizer/workers
-│   │   │   └── workers.py         # Worker agent creation
-│   │   ├── search/                # Search mode implementation
-│   │   │   ├── graph.py           # Simple ReAct loop
-│   │   │   └── prompts.py         # Search agent prompts
-│   │   └── research/              # Research mode implementation
-│   │       ├── graph.py           # Deep research graph
-│   │       ├── prompts.py         # Research prompts
-│   │       └── subagents.py       # Subagent configurations
-│   ├── main.py                    # Server entry point
-│   └── pyproject.toml             # Backend dependencies
-├── frontend/
-│   ├── src/
-│   │   ├── app/                   # Next.js pages & layouts
-│   │   ├── components/            # UI & Chat components
-│   │   │   ├── thread.tsx         # Main chat thread
-│   │   │   ├── thread-list.tsx    # Thread sidebar
-│   │   │   ├── mode-selector.tsx  # Mode selection (if implemented)
-│   │   │   └── ui/                # Shadcn UI components
-│   │   └── providers/             # Theme & State providers
-│   ├── package.json               # Frontend dependencies
-│   └── tailwind.config.ts         # Styling configuration
+│   │   ├── server.py              # FastAPI endpoints & auto-resume logic
+│   │   ├── agent.py               # Mode manager (Brew/Investigator)
+│   │   ├── investigator/          # Investigator Mode
+│   │   │   ├── graph.py           # Planner -> Executor -> Reporter graph
+│   │   │   ├── schema.py          # Structured output schemas (Tasks, Intent)
+│   │   │   ├── state.py           # LangGraph state definition
+│   │   │   └── prompts.py         # Strategic system prompts
+│   │   ├── brew/                  # Brew Mode implementation
+│   │   └── tools/                 # Research toolset (scrape, trends, search)
+│   ├── main.py                    # Entry point
+│   └── requirements.txt           # Dependencies
+├── frontend/                      # Next.js 15 application
+├── run_backend_terminal.py        # Interactive terminal test script
 └── README.md
 ```
 
@@ -318,78 +250,31 @@ marketing-agents-team/
 
 ## 🔧 Technical Details
 
-### Agent Manager
+### Investigator State Management
 
-The `AgentManager` class initializes and manages all three modes:
+- **AgentState**: Orchestrates the flow between planning, data gathering, and reporting.
+- **Intent Discovery**: Uses structured LLM output to classify user feedback as `approve` or `update`.
+- **Checkpointing**: Full state persistence via SQLite, allowing research to be resumed at any point.
 
-- Loads Tavily MCP tools
-- Configures the base model with dynamic overrides
-- Initializes Brew, Search, and Research graphs
-- Provides mode selection via `get_agent(mode)`
+### Automated Streaming Architecture
 
-### Brew Mode State Management
-
-- **BrewState**: Main state containing messages, task_plan, worker_reports, final_response
-- **TaskPlan**: Structured plan with reasoning and list of TaskAssignments
-- **TaskAssignment**: Worker name, task description, priority
-- **WorkerReport**: Worker output with status, result, sources
-- **WorkerState**: State for individual worker execution
-
-### Streaming Architecture
-
-- Uses LangGraph's `astream_events` for fine-grained event streaming
-- Filters events based on mode (brew mode only streams from synthesizer)
-- Emits structured JSON events over SSE
-- Handles reasoning/thinking content for GPT-5/o1/o3 models
-
-### Model Configuration
-
-- Base model: `gpt-4.1` with configurable fields
-- Dynamic model selection via `model_name` config
-- Reasoning configuration for GPT-5 series (`reasoning`, `output_version`, `reasoning_effort`)
-- Reasoning effort for o1/o3 series (`reasoning_effort`)
+- Uses LangGraph's `astream_events` (v1) for real-time visibility.
+- **Auto-Resume**: The server detects manual plan approval and automatically triggers the Executor phase without further user intervention.
+- **Non-Conversational Executor**: Prompted to act as a "B2B Intelligence Officer" that focuses strictly on reporting facts rather than conversational fluff.
 
 ---
 
 ## 🎯 Use Cases
 
-### Brew Mode
-
-- Marketing strategy development
-- Content creation workflows
-- Social media campaign planning
-- Analytics and KPI analysis
-- Multi-faceted research tasks
-
-### Search Mode
-
-- Quick fact-checking
-- Simple web searches
-- Fast answers to straightforward questions
-
-### Research Mode
-
-- Comprehensive research reports
-- Deep-dive analysis
-- Academic-style research
-- Multi-source synthesis
+- **Lead Generation**: Finding funded startups, law firms, and consultants in specific niches.
+- **Competitor Analysis**: Scraping rival landing pages to extract value propositions and tech stacks.
+- **Market Validation**: Using Google Trends and Autocomplete to gauge buyer intent.
+- **Strategic Reporting**: Standardizing chaotic research data into structured business reports.
 
 ---
 
 ## 📝 Notes
 
-- Brew mode is the default when no mode is specified
-- Workers execute sequentially based on task priority (deterministic execution order)
-- The synthesizer only streams tokens (not worker outputs)
-- Thread persistence uses in-memory checkpointer (can be upgraded to SQLite/PostgreSQL)
-- Tavily MCP requires `npx mcp-remote` bridge for connection
-
----
-
-## 🔮 Future Enhancements
-
-- SQLite/PostgreSQL checkpointer for persistent thread history
-- Additional worker types
-- Custom mode creation
-- Enhanced error handling and retry logic
-- Performance optimizations for large-scale deployments
+- **Unified Flow**: The same `thread_id` is used across all phases to maintain context.
+- **Tavily Integration**: High-tier web indices are used for deep scraping and fresh market data.
+- **Privacy**: No user data is stored beyond the local SQLite checkpoint database.
