@@ -1,15 +1,13 @@
 import json
-import logging
 import os
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import ConfigurableField
 from dotenv import load_dotenv
 
-# Load env variables
 load_dotenv()
 from app.tools.marketing import (
     get_autocomplete_suggestions,
@@ -18,6 +16,7 @@ from app.tools.marketing import (
     scrape_competitor_page,
 )
 from .state import AgentState
+from .schemas import ResearchPlan, UserIntent
 from .prompts import (
     get_current_date,
     PLANNER_SYSTEM_PROMPT,
@@ -25,18 +24,22 @@ from .prompts import (
     REPORTER_SYSTEM_PROMPT_TEMPLATE,
 )
 
-# Setup Logger
-logger = logging.getLogger(__name__)
 
-# --- Models ---
+# --- Helper ---
+def extract_content_string(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join([c.get("text", "") for c in content if c.get("type") == "text"])
+    return str(content)
+
+
+# --- Config ---
 api_key = os.getenv("OPENAI_API_KEY")
 if not api_key:
-    raise ValueError("OPENAI_API_KEY not found. Please check your .env file.")
+    print("❌ ERROR: OPENAI_API_KEY missing from .env")
 
-# Base model definition.
-# NOTE: The actual model used is determined by the 'configurable' dict passed from server.py.
-# 'gpt-4o' is just a fallback default if no config is provided.
-base_llm = ChatOpenAI(model="gpt-4o", temperature=0, api_key=api_key)
+base_llm = ChatOpenAI(model="gpt-4.1-mini", api_key=api_key)
 
 llm = base_llm.configurable_fields(
     model_name=ConfigurableField(id="model_name"),
@@ -44,7 +47,6 @@ llm = base_llm.configurable_fields(
     output_version=ConfigurableField(id="output_version"),
 )
 
-# --- Tools List ---
 tools = [
     tavily_search,
     scrape_competitor_page,
@@ -53,258 +55,209 @@ tools = [
 ]
 llm_with_tools = llm.bind_tools(tools)
 
-
-# --- Helper Functions ---
-
-
-def extract_content_string(content: Any) -> str:
-    """
-    Extract string content from response.content which can be:
-    - A string (legacy API)
-    - A list of content blocks (responses API v1)
-    - Other types (fallback to str())
-    """
-    if isinstance(content, list):
-        content_str = ""
-        for item in content:
-            if isinstance(item, dict) and item.get("type") == "text":
-                content_str += item.get("text", "")
-            elif isinstance(item, str):
-                content_str += item
-        return content_str
-    elif isinstance(content, str):
-        return content
-    else:
-        return str(content)
-
-
 # --- Nodes ---
 
 
 async def planner_node(state: AgentState):
-    """
-    Generates a research plan based on the topic and user feedback.
-    Performs an internal search step to identify concrete Competitor URLs.
-    """
-    topic = state.get("topic")
-    user_feedback = state.get("user_feedback", "")
+    topic = state.get("topic", "Unknown Topic")
+    feedback = state.get("user_feedback", "")
+    existing_plan = state.get("research_plan", {})
 
-    logger.info(f"Planner Node: Generating plan for topic: {topic}")
+    print(f"\n🔹 [Planner] ACTIVE for: {topic}")
+    if feedback:
+        print(f"   📝 Feedback received: {feedback}")
 
-    context = f"Topic: {topic}"
-    if user_feedback:
-        context += f"\n\nUser Feedback on previous plan: {user_feedback}"
+    if feedback and existing_plan and existing_plan.get("tasks"):
+        intent_llm = base_llm.with_structured_output(UserIntent)
+        intent_prompt = (
+            f"User Feedback: {feedback}\n\n"
+            "Analyze the user's feedback regarding a research plan. "
+            "Determine if they are APPROVING the plan to proceed immediately, "
+            "or requesting CHANGES/UPDATES to the plan.\n"
+            "- If they say 'ok', 'proceed', 'looks good', 'approved', etc. -> action='approve', feedback_summary=None\n"
+            "- If they ask for changes, additions, removals, or clarifications -> action='update', feedback_summary='Summary of changes needed...'"
+        )
+        try:
+            intent_result = await intent_llm.ainvoke(
+                [HumanMessage(content=intent_prompt)]
+            )
 
-    # --- INTERNAL STEP: Scout for Competitors/URLs ---
-    # We do this here so the plan can have concrete URLs for the scraper.
-    scout_query = f"top 5 companies for {topic} and their official website urls"
-    logger.info(f"Planner Scouting: {scout_query}")
+            if intent_result.action == "approve":
+                print(f"   ⏭️ [Planner] LLM classified intent as 'approve'. Proceeding with existing plan.")
+                return {"research_plan": existing_plan, "user_feedback": ""}
 
-    try:
-        # We invoke the tool directly.
-        # Note: Depending on your tool implementation, this returns a string or list.
-        # We handle both to be safe.
-        search_result = tavily_search.invoke({"query": scout_query})
+            print(f"   🔄 [Planner] LLM classified intent as 'update'. Modifying plan...")
+        except Exception as e:
+            print(f"   ⚠️ [Planner] Intent classification failed: {e}. Defaulting to update.")
+            pass
 
-        scout_context = ""
-        if isinstance(search_result, list):
-            # If tool returns list of dicts
-            for res in search_result:
-                scout_context += f"- {res.get('title', 'Unknown')}: {res.get('url', 'No URL')} ({res.get('content', '')[:100]}...)\n"
-        elif isinstance(search_result, str):
-            # If tool returns string summary
-            scout_context = search_result
+    if existing_plan and feedback:
+        import json
+        plan_str = json.dumps(existing_plan, indent=2)
+        context = (
+            f"Topic: {topic}\n"
+            f"Existing Plan: {plan_str}\n"
+            f"User Feedback: {feedback}\n\n"
+            "INSTRUCTION: Update the plan according to user feedback. Do not lose existing valid tasks unless asked."
+        )
+    else:
+        context = f"Topic: {topic}\nFeedback: {feedback}"
 
-    except Exception as e:
-        logger.warning(f"Planner scout search failed: {e}")
-        scout_context = "Could not perform initial scout search."
-
-    # --- Generate Plan ---
-    full_prompt = (
-        PLANNER_SYSTEM_PROMPT
-        + f"\n\nInitial Scout Findings (Use these URLs):\n{scout_context}"
-    )
-
-    messages = [
-        SystemMessage(content=full_prompt),
-        HumanMessage(content=context),
-    ]
-
-    response = await llm.ainvoke(messages)
-    content = extract_content_string(response.content)
+    # Use function_calling for flexible args
+    structured_llm = llm.with_structured_output(ResearchPlan, method="function_calling")
 
     try:
-        clean_content = content.replace("```json", "").replace("```", "").strip()
-        plan = json.loads(clean_content)
+        plan_object = await structured_llm.ainvoke(
+            [
+                SystemMessage(content=PLANNER_SYSTEM_PROMPT),
+                HumanMessage(content=context),
+            ]
+        )
+
+        plan = plan_object.model_dump()
+        print(f"   ✅ [Planner] Generated {len(plan['tasks'])} tasks:")
+        for t in plan["tasks"]:
+            print(f"      - {t['name']}")
+
     except Exception as e:
-        logger.error(f"Failed to parse plan: {e}")
-        # Fallback plan
+        print(f"   ❌ [Planner] Error: {e}")
         plan = {
             "tasks": [
                 {
-                    "name": "General Search",
-                    "goal": f"Research {topic}",
+                    "name": "Fallback",
+                    "goal": "Error recovery",
                     "tool_hint": "tavily_search",
                     "tool_args": {"query": topic},
                 }
             ]
         }
 
-    return {"research_plan": plan, "messages": [response], "user_feedback": ""}
+    return {"research_plan": plan}
 
 
 async def executor_node(state: AgentState):
-    """
-    Executes the research plan tasks using available tools.
-    """
+    topic = state.get("topic", "Unknown Topic")
     plan = state.get("research_plan", {})
     tasks = plan.get("tasks", [])
-    user_feedback = state.get("user_feedback", "")
 
-    # Initialize cumulative context
-    cumulative_context = f"Topic: {state.get('topic')}\n"
-    if user_feedback:
-        cumulative_context += f"User Guidance: {user_feedback}\n"
+    print(f"\n🔹 [Executor] Processing {len(tasks)} tasks...")
 
-    gathered_data_log = []
-
-    logger.info("Executor Node: Starting execution...")
+    context = f"Topic: {topic}\n"
+    data_log = []
 
     for i, task in enumerate(tasks):
         task_name = task.get("name")
-        goal = task.get("goal")
-        tool_hint = task.get("tool_hint")
-
-        # Get args from plan (planner might have found the URL)
         plan_args = task.get("tool_args", {})
+        task_goal = task.get("goal")
 
-        logger.info(f"Executing Task {i+1}/{len(tasks)}: {task_name}")
+        print(f"   ▶️ [{i+1}/{len(tasks)}] {task_name}")
 
-        # Construct prompt with Date and Context
-        prompt = EXECUTOR_SYSTEM_PROMPT_TEMPLATE.format(
+        prompt_content = EXECUTOR_SYSTEM_PROMPT_TEMPLATE.format(
             date=get_current_date(),
             task_name=task_name,
-            goal=goal,
-            previous_findings=cumulative_context[-6000:],  # Limit context
+            goal=task_goal,
+            previous_findings=context[-6000:],
+            topic=topic,
         )
 
-        msg = [HumanMessage(content=prompt)]
+        task_messages = [HumanMessage(content=prompt_content)]
+        task_res = ""
 
-        # Call LLM
-        response = await llm_with_tools.ainvoke(msg)
+        for turn in range(3):
+            response = await llm_with_tools.ainvoke(task_messages)
+            task_messages.append(response)
 
-        task_result = ""
+            if response.tool_calls:
+                for tc in response.tool_calls:
+                    t_name = tc["name"]
+                    t_args = tc["args"]
+                    t_id = tc["id"]
 
-        # 1. Handle Tool Calls
-        if response.tool_calls:
-            for tool_call in response.tool_calls:
-                tool_name = tool_call["name"]
-                llm_args = tool_call["args"]
+                    if turn == 0 and t_name == "scrape_competitor_page" and "url" in plan_args:
+                        t_args["url"] = plan_args["url"]
+                        print(f"      🔗 Enforcing URL: {t_args['url']}")
 
-                logger.info(f"Tool Call: {tool_name}")
+                    print(f"      🛠️ Calling: {t_name}")
+                    tool_func = next((t for t in tools if t.name == t_name), None)
 
-                # Find tool instance
-                tool_func = next((t for t in tools if t.name == tool_name), None)
+                    tool_output = "Error: Tool not found."
+                    if tool_func:
+                        try:
+                            tool_output = tool_func.invoke(t_args)
+                            tool_output_str = str(tool_output)
+                            if len(tool_output_str) > 5000:
+                                tool_output_str = tool_output_str[:5000] + "... (truncated)"
 
-                if tool_func:
-                    # Smart Arg Merging:
-                    # If the planner gave a URL for scraping, FORCE it over the LLM's guess
-                    final_args = llm_args.copy()
-                    if tool_name == "scrape_competitor_page" and "url" in plan_args:
-                        final_args["url"] = plan_args["url"]
-                        logger.info(
-                            f"  -> Enforcing URL from Plan: {final_args['url']}"
-                        )
-                    elif tool_name == "tavily_search" and "query" in plan_args:
-                        # For search, LLM's query might be better tailored to context,
-                        # but if plan was specific, we respect it.
-                        pass
+                            task_res += f"\n[Tool {t_name} Output]: {tool_output_str[:500]}\n"
+                        except Exception as e:
+                            print(f"      ❌ Tool Error: {e}")
+                            tool_output = f"Error: {e}"
+                            task_res += f"\nError {t_name}: {e}\n"
 
-                    try:
-                        res = tool_func.invoke(final_args)
-                        task_result += (
-                            f"\n[Tool Output from {tool_name}]:\n{str(res)}\n"
-                        )
-                    except Exception as e:
-                        task_result += f"\nError executing {tool_name}: {str(e)}\n"
-        else:
-            content = extract_content_string(response.content)
-            task_result += f"\nAnalysis: {content}\n"
+                    task_messages.append(
+                        ToolMessage(tool_call_id=t_id, content=str(tool_output))
+                    )
 
-        # 2. Update Context (Summarize to save tokens)
-        summary = f"Task '{task_name}' Result: {task_result[:800]}..."
-        cumulative_context += f"\n{summary}\n"
+                # No tool calls = Final Answer
+                content = extract_content_string(response.content)
+                task_res += f"\nAnalysis: {content}\n"
+                break
 
-        # 3. Log Full Data
-        gathered_data_log.append(
-            f"### Task: {task_name}\n**Goal:** {goal}\n\n{task_result}"
-        )
+        if not task_res:
+            task_res = "Task completed with tool actions but no final summary."
 
-    return {"gathered_data": gathered_data_log}
+        context += f"\nTask '{task_name}' Summary: {task_res[:500]}...\n"
+        data_log.append(f"### {task_name}\n{task_res}")
+
+    return {"gathered_data": data_log, "user_feedback": ""}
 
 
 async def reporter_node(state: AgentState):
-    """
-    Aggregates data and writes the final report.
-    """
-    topic = state.get("topic")
-    data = state.get("gathered_data", [])
-    feedback = state.get("user_feedback", "")
-
-    logger.info("Reporter Node: generating final report")
-
-    data_str = "\n\n".join(data)
-
+    print("\n🔹 [Reporter] Writing final report...")
+    data_str = "\n\n".join(state.get("gathered_data", []))
     prompt = REPORTER_SYSTEM_PROMPT_TEMPLATE.format(
-        date=get_current_date(), topic=topic, data_str=data_str, feedback=feedback
+        date=get_current_date(),
+        topic=state.get("topic", "Unknown"),
+        data_str=data_str,
+        feedback=state.get("user_feedback", ""),
     )
-
     response = await llm.ainvoke([HumanMessage(content=prompt)])
-
     content = extract_content_string(response.content)
+    print("   ✅ [Reporter] Done.")
     return {"final_report": content}
 
 
-# --- Graph Construction ---
-
-
+# --- Graph ---
 def should_continue(state: AgentState):
-    feedback = state.get("user_feedback", "").lower().strip()
-    approval_keywords = [
-        "approve",
-        "approved",
-        "ok",
-        "okay",
-        "yes",
-        "go",
-        "proceed",
-        "",
-    ]
-    if not feedback or feedback in approval_keywords:
+    fb = state.get("user_feedback", "").lower().strip()
+    if not fb:
         return "executor"
-    return "planner"
+    return "executor"
 
 
 def build_investigator_graph(checkpointer: BaseCheckpointSaver):
     builder = StateGraph(AgentState)
-
     builder.add_node("planner", planner_node)
     builder.add_node("executor", executor_node)
     builder.add_node("reporter", reporter_node)
 
     builder.add_edge(START, "planner")
-
     builder.add_conditional_edges(
         "planner", should_continue, {"executor": "executor", "planner": "planner"}
     )
-
     builder.add_edge("executor", "reporter")
     builder.add_edge("reporter", END)
 
-    # Compile with interrupt AFTER planner to allow user review
-    graph = builder.compile(
-        checkpointer=checkpointer,
-        interrupt_after=["planner"],
-    )
+    return builder.compile(checkpointer=checkpointer, interrupt_after=["planner"])
 
-    return graph
+
+def build_executor_graph(checkpointer: BaseCheckpointSaver):
+    builder = StateGraph(AgentState)
+    builder.add_node("executor", executor_node)
+    builder.add_node("reporter", reporter_node)
+
+    builder.add_edge(START, "executor")
+    builder.add_edge("executor", "reporter")
+    builder.add_edge("reporter", END)
+
+    return builder.compile(checkpointer=checkpointer)

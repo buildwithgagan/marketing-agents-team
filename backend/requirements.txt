@@ -1,0 +1,19 @@
+# Core API
+fastapi
+uvicorn
+python-dotenv
+requests
+sseclient-py
+
+# AI & LangChain
+langchain
+langchain-openai
+langgraph
+
+aiosqlite==0.21.0
+langgraph-checkpoint-sqlite
+
+# Tools
+tavily-python
+firecrawl-py
+pytrends

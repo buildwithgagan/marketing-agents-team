@@ -179,7 +179,7 @@ export default function Home() {
         >
           <div
             className={cn(
-              "flex items-center border-b flex-shrink-0 h-14",
+              "flex items-center border-b shrink-0 h-14",
               sidebarOpen ? "p-4" : "p-2 justify-center"
             )}
           >
@@ -203,7 +203,7 @@ export default function Home() {
 
         {/* Main Content */}
         <div className="flex-1 flex flex-col relative overflow-hidden bg-background w-full md:ml-0">
-          <header className="h-14 border-b flex items-center px-2 sm:px-4 gap-2 sm:gap-4 flex-shrink-0 bg-background/80 backdrop-blur-md z-10">
+          <header className="h-14 border-b flex items-center px-2 sm:px-4 gap-2 sm:gap-4 shrink-0 bg-background/80 backdrop-blur-md z-10">
             <Button
               variant="ghost"
               size="icon"
@@ -238,7 +238,7 @@ export default function Home() {
                   <span className="truncate">{currentModelName}</span>
                   <ChevronDown
                     className={cn(
-                      "size-3 transition-transform flex-shrink-0",
+                      "size-3 transition-transform shrink-0",
                       isModelDropdownOpen && "rotate-180"
                     )}
                   />
@@ -280,7 +280,7 @@ export default function Home() {
                   selectedModel.startsWith("o1") ||
                   selectedModel.startsWith("o3")) && (
                   <>
-                    <div className="w-[1px] h-3 bg-border mx-1 hidden sm:block" />
+                    <div className="w-[px] h-3 bg-border mx-1 hidden sm:block" />
                     <label className="flex items-center gap-1 sm:gap-1.5 px-1 sm:px-2 cursor-pointer group">
                       <input
                         type="checkbox"

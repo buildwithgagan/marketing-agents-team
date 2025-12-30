@@ -22,7 +22,6 @@ if not OPENAI_API_KEY:
         "OPENAI_API_KEY not found in environment variables. "
         "Please ensure it's set in your .env file or environment."
     )
-print(f"✓ OPENAI_API_KEY loaded")
 
 
 class AgentManager:
@@ -57,7 +56,7 @@ class AgentManager:
             raise ValueError("OPENAI_API_KEY not found. Please check your .env file.")
 
         self.model = ChatOpenAI(
-            model="gpt-4.1", temperature=0, api_key=api_key  # Explicitly pass API key
+            model="gpt-4.1-mini", api_key=api_key  # Explicitly pass API key
         ).configurable_fields(
             model_name=ConfigurableField(id="model_name"),
             reasoning=ConfigurableField(id="reasoning"),
