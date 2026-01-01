@@ -48,13 +48,8 @@ def listen_to_stream(thread_id):
                 status = "approved"
 
             elif msg_type == "report":
-                print("\n\n" + "=" * 30)
-                print(" FINAL REPORT ")
-                print("=" * 30 + "\n")
-                print(payload["content"])
-                print("\n" + "=" * 30 + "\n")
+                print("\n\n" + "=" * 30 + "\n")
                 status = "finished"
-                # Continue to wait for "complete" event
 
             elif msg_type == "complete":
                 print("\n✅ Stream Finished.")
@@ -81,7 +76,7 @@ def test_investigator():
 
     # 1. Start
     res = requests.post(
-        f"{BASE_URL}/start", json={"topic": topic, "model": "gpt-4.1-mini"}
+        f"{BASE_URL}/start", json={"topic": topic, "model": "gpt-5-mini"}
     )
     data = res.json()
     thread_id = data["thread_id"]

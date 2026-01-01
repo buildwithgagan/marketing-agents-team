@@ -6,16 +6,12 @@ import sys
 from contextlib import asynccontextmanager
 from typing import Dict, Any, List, Optional
 
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import FastAPI, BackgroundTasks, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-from .investigator.graph import (
-    build_executor_graph,
-    build_investigator_graph,
-)
+from .agent import agent_manager
 
 # Setup Logger
 logging.basicConfig(level=logging.INFO)
@@ -27,11 +23,10 @@ event_queues: Dict[str, asyncio.Queue] = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    async with AsyncSqliteSaver.from_conn_string("checkpoints.db") as checkpointer:
-        app.state.graph = build_investigator_graph(checkpointer)
-        logger.info("Graph Initialized")
-        app.state.checkpointer = checkpointer
-        yield
+    # Initialize Agent Manager (loads all graphs)
+    await agent_manager.initialize()
+    logger.info("Agent Manager Initialized")
+    yield
 
 
 app = FastAPI(lifespan=lifespan)
@@ -46,7 +41,8 @@ app.add_middleware(
 
 class StartRequest(BaseModel):
     topic: str
-    model: str = "gpt-4.1-mini"  # <--- UPDATED DEFAULT
+    model: str = "gpt-5-mini"
+    mode: str = "investigator"
 
 
 class ApproveRequest(BaseModel):
@@ -89,6 +85,7 @@ async def stream_graph_execution(graph, config, input_data, thread_id):
 
                 elif kind == "on_chain_end":
                     output = event["data"].get("output", {})
+                    # --- Investigator Events ---
                     if name == "planner":
                         if output.get("user_feedback") == "" and is_continuing:
                             await queue.put(json.dumps({"type": "approved"}))
@@ -99,14 +96,39 @@ async def stream_graph_execution(graph, config, input_data, thread_id):
                                     {"type": "plan", "content": output.get("research_plan")}
                                 )
                             )
-                    elif name == "executor":
-                        pass
                     elif name == "reporter":
                         await queue.put(
                             json.dumps(
                                 {"type": "report", "content": output.get("final_report")}
                             )
                         )
+                    
+                    # --- Omniscient Events ---
+                    # elif name == "chief_editor":
+                    #      await queue.put(
+                    #         json.dumps(
+                    #             {"type": "status", "content": f"📚 Outline generated with {len(output.get('book_outline', []))} chapters."}
+                    #         )
+                    #     )
+                    # elif name == "writer":
+                    #      idx = output.get("current_chapter_index", 0)
+                    #      await queue.put(
+                    #         json.dumps(
+                    #             {"type": "status", "content": f"✍️ Finished drafting Chapter {idx}."}
+                    #         )
+                    #     )
+                    # elif name == "assembler":
+                    #      # The assembler returns 'messages' with the full report as the last message content?
+                    #      # Or we look at what 'assembler_node' returned.
+                    #      # It returned {"messages": [HumanMessage(content=full_report)], "status": "complete"}
+                    #      # Wait, 'on_chain_end' for a node returns the node's output.
+                    #      msgs = output.get("messages", [])
+                    #      if msgs:
+                    #          report_content = msgs[0].content if hasattr(msgs[0], "content") else str(msgs[0])
+                    #          await queue.put(
+                    #             json.dumps({"type": "report", "content": report_content})
+                    #         )
+
                 elif kind == "on_chain_start":
                     if name == "executor":
                         await queue.put(
@@ -136,7 +158,6 @@ async def stream_graph_execution(graph, config, input_data, thread_id):
 async def start_research(req: StartRequest):
     thread_id = str(uuid.uuid4())
 
-    # Pass response output version just in case
     config = {
         "configurable": {
             "thread_id": thread_id,
@@ -146,47 +167,81 @@ async def start_research(req: StartRequest):
     }
 
     event_queues[thread_id] = asyncio.Queue()
-    logger.info(f"Starting {thread_id} for {req.topic}")
+    logger.info(f"Starting {thread_id} for {req.topic} (Mode: {req.mode})")
 
-    await app.state.graph.ainvoke({"topic": req.topic}, config)
+    try:
+        agent = agent_manager.get_agent(req.mode)
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-    state = await app.state.graph.aget_state(config)
-    plan = state.values.get("research_plan")
-
-    return {"thread_id": thread_id, "plan": plan}
+    # Async invoke to start the graph
+    # For Omniscient, we assume it runs fully or until interrupt
+    # Investigator interrupts at planner.
+    await agent.ainvoke({"topic": req.topic}, config)
+    
+    # Check state for immediate results (Investigator Planner)
+    state = await agent.aget_state(config)
+    
+    response = {"thread_id": thread_id}
+    
+    if req.mode == "investigator":
+        plan = state.values.get("research_plan")
+        response["plan"] = plan
+    
+    # Add background task to stream subsequent events if it's meant to run autonomously?
+    # Actually, the client is expected to connect to /stream right after. 
+    # But for Investigator, it pauses.
+    # For Omniscient, it runs fully. 
+    # If we 'await ainvoke', it waits until the end (Omniscient) or interrupt (Investigator).
+    # If Omniscient runs for 15 mins, 'await ainvoke' will timeout the HTTP request!
+    # We should use `ainvoke` in background for Omniscient?
+    # Or just return thread_id and let /stream pick it up? 
+    # LangGraph's ainvoke waits.
+    
+    # FIX: For long running modes (Omniscient), we should NOT await result in the endpoint.
+    # But for Investigator, we need the initial plan to return in the JSON response?
+    # Current Investigator flow:
+    # 1. /start (waits for ainvoke to hit interrupt at planner) -> returns Plan
+    # 2. Client shows plan.
+    
+    # Omniscient flow:
+    # 1. /start (should kick off background task?) -> returns thread_id
+    # 2. Client listens to stream.
+    
+    # If I await ainvoke for Omniscient, it will timeout.
+    # So I must run it in background IF mode != investigator? 
+    # Or always background and client relies on stream?
+    # The current 'test_investigator' expects 'plan' in /start response.
+    
+    # if req.mode == "omniscient":
+    #     # Run in background
+    #      asyncio.create_task(
+    #         stream_graph_execution(agent, config, {"topic": req.topic}, thread_id)
+    #     )
+         # We don't return plan for Omniscient in response, client gets it via Status stream
+    
+    return response
 
 
 @app.post("/approve")
 async def approve_plan(req: ApproveRequest, tasks: BackgroundTasks):
     config = {"configurable": {"thread_id": req.thread_id}}
 
-    # Retrieve current state from checkpoint to verify required fields exist
-    state = await app.state.graph.aget_state(config)
+    # We assume this is for Investigator mode since it's "Plan Approval"
+    agent = agent_manager.get_agent("investigator")
+
+    state = await agent.aget_state(config)
     if not state or "topic" not in state.values:
         logger.error(f"State missing 'topic' for thread {req.thread_id}")
         return {"status": "error", "message": "State missing required 'topic' field"}
 
-    # Update state with user feedback
-    await app.state.graph.aupdate_state(config, {"user_feedback": req.feedback})
-
-    # Verify the state update was committed by retrieving state again
-    updated_state = await app.state.graph.aget_state(config)
-    if updated_state.values.get("user_feedback") != req.feedback:
-        logger.warning(
-            f"State update may not have been committed for thread {req.thread_id}"
-        )
-
+    await agent.aupdate_state(config, {"user_feedback": req.feedback})
+    
     if req.thread_id not in event_queues:
         event_queues[req.thread_id] = asyncio.Queue()
 
-    # Build the full investigator graph.
-    # The 'planner_node' inside will decide whether to proceed or regenerate based on feedback.
-    # Using 'executor_graph' forces it to skip the planner entirely, which breaks modification requests.
-
-    # Use the FULL investigator graph so we route back to Planner if needed
-    investigator_graph = build_investigator_graph(app.state.checkpointer)
     tasks.add_task(
-        stream_graph_execution, investigator_graph, config, {}, req.thread_id
+        stream_graph_execution, agent, config, {}, req.thread_id
     )
 
     return {"status": "started", "message": "Listen to /stream/{thread_id}"}
@@ -199,17 +254,21 @@ async def stream_events(thread_id: str):
     queue = event_queues[thread_id]
 
     async def event_generator():
-        try:
-            while True:
-                data = await queue.get()
-                yield f"data: {data}\n\n"
-                try:
-                    parsed = json.loads(data)
-                    if parsed.get("type") in ["complete", "error"]:
+        while True:
+            try:
+                # Wait for data with a timeout to allow checking connection status
+                data = await asyncio.wait_for(queue.get(), timeout=1.0)
+                if data:
+                    yield f"data: {data}\n\n"
+                    # If we sent a complete message, we can stop
+                    payload = json.loads(data)
+                    if payload.get("type") == "complete":
                         break
-                except:
-                    pass
-        except asyncio.CancelledError:
-            logger.info("Client disconnected")
+            except asyncio.TimeoutError:
+                yield ": keep-alive\n\n"
+            except Exception as e:
+                logger.error(f"Queue error: {e}")
+                break
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+

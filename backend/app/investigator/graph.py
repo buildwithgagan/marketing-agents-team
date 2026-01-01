@@ -39,7 +39,7 @@ api_key = os.getenv("OPENAI_API_KEY")
 if not api_key:
     print("❌ ERROR: OPENAI_API_KEY missing from .env")
 
-base_llm = ChatOpenAI(model="gpt-4.1-mini", api_key=api_key)
+base_llm = ChatOpenAI(model="gpt-5-mini", api_key=api_key)
 
 llm = base_llm.configurable_fields(
     model_name=ConfigurableField(id="model_name"),
@@ -73,9 +73,10 @@ async def planner_node(state: AgentState):
             f"User Feedback: {feedback}\n\n"
             "Analyze the user's feedback regarding a research plan. "
             "Determine if they are APPROVING the plan to proceed immediately, "
-            "or requesting CHANGES/UPDATES to the plan.\n"
+            "requesting CHANGES/UPDATES to the plan, or if the feedback is UNCLEAR/NEEDS CLARIFICATION.\n"
             "- If they say 'ok', 'proceed', 'looks good', 'approved', etc. -> action='approve', feedback_summary=None\n"
-            "- If they ask for changes, additions, removals, or clarifications -> action='update', feedback_summary='Summary of changes needed...'"
+            "- If they ask for changes -> action='update', feedback_summary='Summary of changes needed...'\n"
+            "- If feedback is unclear, nonsensical, or irrelevant -> action='clarify', feedback_summary='Polite question asking for clarification.'"
         )
         try:
             intent_result = await intent_llm.ainvoke(
@@ -84,7 +85,15 @@ async def planner_node(state: AgentState):
 
             if intent_result.action == "approve":
                 print(f"   ⏭️ [Planner] LLM classified intent as 'approve'. Proceeding with existing plan.")
-                return {"research_plan": existing_plan, "user_feedback": ""}
+                return {"research_plan": existing_plan, "user_feedback": ""} # Clear feedback to proceed to executor
+
+            if intent_result.action == "clarify":
+                print(f"   ❓ [Planner] Intent unclear. Asking user for clarification.")
+                # Return placeholder feedback to pause graph without auto-resume
+                return {
+                     "research_plan": existing_plan, 
+                     "user_feedback": "WAITING_FOR_CLARIFICATION" 
+                } 
 
             print(f"   🔄 [Planner] LLM classified intent as 'update'. Modifying plan...")
         except Exception as e:
@@ -92,6 +101,9 @@ async def planner_node(state: AgentState):
             pass
 
     if existing_plan and feedback:
+        # Ignore feedback if it's the placeholder
+        if feedback == "WAITING_FOR_CLARIFICATION":
+            return {"research_plan": existing_plan, "user_feedback": ""}
         import json
         plan_str = json.dumps(existing_plan, indent=2)
         context = (
@@ -229,9 +241,18 @@ async def reporter_node(state: AgentState):
 
 # --- Graph ---
 def should_continue(state: AgentState):
-    fb = state.get("user_feedback", "").lower().strip()
-    if not fb:
-        return "executor"
+    # Robustly handle None feedback and detect clarification hook
+    fb = (state.get("user_feedback") or "").lower().strip()
+    
+    if fb == "waiting_for_clarification":
+        # Loop back to planner so it can receive the NEXT input from user
+        return "planner"
+
+    # If any other feedback exists, go to planner to process it
+    if fb:
+        return "planner"
+    
+    # Default: Proceed to Executor
     return "executor"
 
 

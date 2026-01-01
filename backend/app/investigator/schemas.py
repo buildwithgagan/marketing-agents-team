@@ -22,8 +22,8 @@ class ResearchPlan(BaseModel):
 
 class UserIntent(BaseModel):
     action: str = Field(
-        description="The action to take based on user feedback. Must be 'approve' or 'update'."
+        description="The action to take based on user feedback. Must be 'approve', 'update', or 'clarify'."
     )
     feedback_summary: Optional[str] = Field(
-        description="Summarized feedback for the planner if action is 'update'. None if 'approve'."
+        description="Summarized feedback for the planner if action is 'update'. Clarification question if action is 'clarify'. None if 'approve'."
     )
